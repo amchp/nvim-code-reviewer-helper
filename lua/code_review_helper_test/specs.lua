@@ -103,6 +103,15 @@ local function find_buffer_by_name(pattern)
   return nil
 end
 
+local function find_win_for_buf(tabpage, bufnr)
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tabpage)) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      return win
+    end
+  end
+  return nil
+end
+
 function M.tests()
   return {
     {
@@ -849,6 +858,27 @@ function M.tests()
         guide_ui.prev_item()
         t.eq(1, helper.__state().guide_current_index)
 
+        local guide_tabpage = helper.__state().guide_tabpage
+        local guide_wins = vim.api.nvim_tabpage_list_wins(guide_tabpage)
+        local list_win = find_win_for_buf(guide_tabpage, helper.__state().guide_list_bufnr)
+        local code_win = nil
+        for _, win in ipairs(guide_wins) do
+          if win ~= list_win then
+            code_win = win
+            break
+          end
+        end
+        t.ok(list_win ~= nil)
+        t.ok(code_win ~= nil)
+
+        local list_col = vim.api.nvim_win_get_position(list_win)[2]
+        local code_col = vim.api.nvim_win_get_position(code_win)[2]
+        t.ok(list_col < code_col)
+
+        local total_width = vim.api.nvim_win_get_width(list_win) + vim.api.nvim_win_get_width(code_win)
+        local ratio = vim.api.nvim_win_get_width(list_win) / total_width
+        t.ok(ratio > 0.18 and ratio < 0.3, string.format("unexpected list ratio: %.3f", ratio))
+
         vim.api.nvim_set_current_win(vim.fn.bufwinid(helper.__state().guide_list_bufnr))
         local mapping = vim.fn.maparg("<Tab>", "n", false, true)
         t.eq("<Tab>", mapping.lhs)
@@ -876,6 +906,24 @@ function M.tests()
         local modified_left = find_buffer_by_name("crh://guide%-left/")
         local modified_text = table.concat(vim.api.nvim_buf_get_lines(modified_left, 0, -1, false), "\n")
         t.match("local value = 1", modified_text)
+
+        local guide_tabpage = helper.__state().guide_tabpage
+        local list_win = find_win_for_buf(guide_tabpage, helper.__state().guide_list_bufnr)
+        local positions = {}
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(guide_tabpage)) do
+          positions[#positions + 1] = {
+            win = win,
+            col = vim.api.nvim_win_get_position(win)[2],
+            width = vim.api.nvim_win_get_width(win),
+          }
+        end
+        table.sort(positions, function(a, b)
+          return a.col < b.col
+        end)
+        t.ok(list_win ~= nil)
+        t.eq(list_win, positions[1].win)
+        t.ok(positions[1].col < positions[2].col)
+        t.ok(math.abs(positions[2].width - positions[3].width) <= 2)
 
         guide_ui.next_item()
         local untracked_left_buf = find_buffer_by_name("crh://guide%-left/")
@@ -951,6 +999,59 @@ function M.tests()
         package.loaded["diffview.rev"] = nil
         package.loaded["diffview.api.views.diff.diff_view"] = nil
         package.loaded["diffview.lib"] = nil
+      end,
+    },
+    {
+      name = "reopening a guide session refreshes buffers without duplicate-name errors",
+      run = function()
+        local guide_ui = require("code_reviewer_helper.ui.guide")
+        local state = require("code_reviewer_helper.state")
+        local root = t.tmp_dir("guide_reopen")
+        local config = {
+          guide = {
+            use_diffview_if_available = false,
+          },
+        }
+        local original_devicons = package.loaded["nvim-web-devicons"]
+
+        package.loaded["nvim-web-devicons"] = {
+          get_icon = function()
+            return "X"
+          end,
+        }
+
+        guide_ui.open({
+          id = "guide-one",
+          mode = "repo",
+          workspace_root = root,
+          summary = "first summary",
+          plan_markdown = "# Review Order\n\n1. first",
+          items = {
+            { path = "README.md", reason = "first reason", status = "repo" },
+          },
+        }, config)
+
+        local ok, err = pcall(function()
+          guide_ui.open({
+            id = "guide-two",
+            mode = "repo",
+            workspace_root = root,
+            summary = "second summary",
+            plan_markdown = "# Review Order\n\n1. second",
+            items = {
+              { path = "lua/code_reviewer_helper/init.lua", reason = "second reason", status = "repo" },
+            },
+          }, config)
+        end)
+
+        package.loaded["nvim-web-devicons"] = original_devicons
+
+        t.ok(ok, err)
+        local list_text = table.concat(vim.api.nvim_buf_get_lines(state.guide_list_bufnr, 0, -1, false), "\n")
+        local plan_text = table.concat(vim.api.nvim_buf_get_lines(state.guide_plan_bufnr, 0, -1, false), "\n")
+        t.match("second summary", list_text)
+        t.match("X lua/code_reviewer_helper/init.lua", list_text)
+        t.match("1%. second", plan_text)
       end,
     },
     {

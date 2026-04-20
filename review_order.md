@@ -1,0 +1,15 @@
+- [README.md](/home/automac/Documents/Projects/code-reviewer-helper/README.md#L1): user-facing behavior and setup.
+- [plugin/code_reviewer_helper.lua](/home/automac/Documents/Projects/code-reviewer-helper/plugin/code_reviewer_helper.lua#L1): command registration.
+- [lua/code_reviewer_helper/init.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/init.lua#L1): main orchestration.
+- [lua/code_reviewer_helper/config.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/config.lua#L1): defaults and validation.
+- [lua/code_reviewer_helper/selection.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/selection.lua#L1): visual selection capture.
+- [lua/code_reviewer_helper/context.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/context.lua#L1): workspace docs + BTCA context discovery.
+- [lua/code_reviewer_helper/prompt.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/prompt.lua#L1): final prompt assembly.
+- [lua/code_reviewer_helper/provider/codex_exec.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/provider/codex_exec.lua#L1): Codex CLI command builder and process launch.
+- [lua/code_reviewer_helper/jobs.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/jobs.lua#L1): async lifecycle, cancellation, completion.
+- [lua/code_reviewer_helper/history.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/history.lua#L1): persisted response history under `stdpath("state")`.
+- [lua/code_reviewer_helper/ui/split.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/ui/split.lua#L1): result pane rendering and navigation.
+- [lua/code_reviewer_helper/ui/history.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/ui/history.lua#L1): picker UI for saved responses.
+- [lua/code_reviewer_helper/health.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_reviewer_helper/health.lua#L1): environment checks.
+- [lua/code_review_helper_test/specs.lua](/home/automac/Documents/Projects/code-reviewer-helper/lua/code_review_helper_test/specs.lua#L1): behavior spec, especially edge cases.
+

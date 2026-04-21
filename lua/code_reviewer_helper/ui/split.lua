@@ -1,4 +1,5 @@
 local state = require("code_reviewer_helper.state")
+local util = require("code_reviewer_helper.util")
 
 local M = {}
 local split_augroup = vim.api.nvim_create_augroup("CodeReviewerHelperSplit", { clear = true })
@@ -13,7 +14,22 @@ end
 local function clear_state()
   state.split_winid = nil
   state.split_bufnr = nil
+  state.split_tabpage = nil
   state.current_response_id = nil
+end
+
+local function restore_guide_layout(immediate)
+  local ok, guide = pcall(require, "code_reviewer_helper.ui.guide")
+  if not ok or type(guide.refresh_layout) ~= "function" then
+    return
+  end
+  if immediate then
+    pcall(guide.refresh_layout)
+    return
+  end
+  vim.schedule(function()
+    pcall(guide.refresh_layout)
+  end)
 end
 
 local function next_entry()
@@ -23,14 +39,37 @@ local function next_entry()
   return require("code_reviewer_helper.history").neighbor(state.current_response_id, 1)
 end
 
+function M.should_auto_open(tabpage)
+  if not state.config or not state.config.ui.auto_open_on_complete then
+    return false
+  end
+  if not util.mode_is_normal() then
+    return false
+  end
+  if tabpage then
+    if not vim.api.nvim_tabpage_is_valid(tabpage) then
+      return false
+    end
+    if vim.api.nvim_get_current_tabpage() ~= tabpage then
+      return false
+    end
+  end
+  return true
+end
+
 local function handoff_after_window_close()
   local entry = next_entry()
   local config = state.config
+  local closed_tabpage = state.split_tabpage
   clear_state()
   if not entry or not config then
     return false
   end
   vim.schedule(function()
+    if not M.should_auto_open(closed_tabpage) then
+      restore_guide_layout()
+      return
+    end
     M.render(entry, config)
   end)
   return true
@@ -50,7 +89,9 @@ vim.api.nvim_create_autocmd("WinClosed", {
       return
     end
 
-    handoff_after_window_close()
+    if not handoff_after_window_close() then
+      restore_guide_layout()
+    end
   end,
 })
 
@@ -75,6 +116,7 @@ local function ensure_window(config)
 
   state.split_winid = win
   state.split_bufnr = buf
+  state.split_tabpage = vim.api.nvim_win_get_tabpage(win)
   return win, buf
 end
 
@@ -122,6 +164,7 @@ function M.render(entry, config, opts)
   local history = require("code_reviewer_helper.history")
   local current = vim.api.nvim_get_current_win()
   local win, buf = ensure_window(config)
+  state.split_tabpage = vim.api.nvim_win_get_tabpage(win)
   apply_window_options(win, config)
   apply_buffer_options(buf)
   local lines = {}
@@ -209,6 +252,7 @@ function M.close()
   end
   clear_state()
   state.suppress_split_handoff = false
+  restore_guide_layout(true)
 end
 
 function M.close_or_next()

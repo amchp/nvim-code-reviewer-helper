@@ -6,7 +6,7 @@ Neovim plugin for visually selecting code and asking Codex for short explanation
 
 - Captures a visual selection plus surrounding code.
 - Adds workspace docs such as `AGENTS.md` and `README.md`.
-- Adds BTCA local repo context from `~/.btca/agent/sandbox`.
+- Discovers dependency repositories from the active workspace and exposes synced clones from `~/.btca/agent/sandbox`.
 - Runs `codex exec` in explain-only mode with `gpt-5.4-mini` by default.
 - Opens the response in a reusable right-side markdown split.
 - Wraps long lines in that response split so the explanation stays readable.
@@ -128,6 +128,8 @@ For this local-path setup, you do not reinstall after code changes. Neovim is re
 - `:CRHGuide`
 - `:CRHGuideHistory`
 - `:CRHGuideOpenLast`
+- `:CRHGuideHistoryClear`
+- `:CRHGuideClose`
 - `:CRHGuidePlan`
 
 ## Guided Review
@@ -137,8 +139,10 @@ Run `:CRHGuide` from inside a repository to ask Codex for the best order to unde
 - If `git status --porcelain=v1 --untracked-files=all` is non-empty, the guide starts in `changes` mode.
 - Otherwise it starts in `repo` mode.
 - The session stores a markdown plan under Neovim state and reopens it with `:CRHGuidePlan`.
+- Saved guide history records the HEAD commit name for git-backed walkthroughs.
 - If `diffview.nvim` is installed, changed-file sessions use Diffview's custom diff view API.
 - Without `diffview.nvim`, the plugin falls back to a native tab with a left file list and right content panes.
+- Closing a guide saves the current file position, and `:CRHGuideOpenLast` resumes from that file.
 
 Within a guide session:
 
@@ -146,6 +150,50 @@ Within a guide session:
 - `<S-Tab>` moves to the previous file.
 - `gp` opens the guide plan.
 - `q` closes the guide tab.
+
+Useful guide commands:
+
+- `:CRHGuideOpenLast` reopens the last saved guide at its last saved file.
+- `:CRHGuideClose` closes the guide and saves the current file as the resume point.
+- `:CRHGuideHistoryClear` clears saved guide history for the current workspace.
+
+## BTCA Dependency Repositories
+
+`BTCA` no longer seeds the sandbox with fixed example repositories.
+
+Instead, the plugin resolves repositories from the current workspace, keeps a small high-signal subset, and uses the sandbox for synced dependency clones that Codex can inspect alongside your project.
+
+Current discovery is intentionally conservative:
+
+- `package.json` direct git or GitHub-style dependencies
+- `go.mod` dependencies hosted on `github.com`, `gitlab.com`, or `bitbucket.org`
+- `Cargo.toml` dependencies with explicit `git = "..."`
+- `pyproject.toml` and `requirements.txt` git-based dependencies
+- optional manual extras from `btca.repositories`
+
+The plugin does not sync every discovered repo by default. It ranks candidates and keeps the most important few, preferring manual entries and runtime dependencies over lower-signal sources like dev-only dependencies.
+
+You can tune the shortlist size with:
+
+```lua
+require("code_reviewer_helper").setup({
+  btca = {
+    max_repositories = 5,
+  },
+})
+```
+
+If you want the sandbox kept up to date automatically before each explain request, enable:
+
+```lua
+require("code_reviewer_helper").setup({
+  btca = {
+    auto_sync = true,
+  },
+})
+```
+
+Otherwise run `:CRHBtcaSync` from inside the repository you are reviewing.
 
 ## What `:CRHHealth` Checks
 
@@ -155,7 +203,8 @@ Within a guide session:
 - BTCA sandbox directory exists or can be created
 - current buffer resolves to a workspace root
 - whether visual mode is currently active
-- how many BTCA repos are visible in the sandbox
+- how many BTCA repos are already visible in the sandbox
+- how many prioritized dependency repositories the current workspace resolves
 
 It does not send a live Codex request, so authentication is only inferred from local setup. The real end-to-end auth check is running `:CRHExplain`.
 

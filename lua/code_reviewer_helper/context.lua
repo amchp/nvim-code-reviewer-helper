@@ -33,8 +33,8 @@ local function find_docs(root, path, names, max_bytes)
   return docs
 end
 
-function M.build(selection, config)
-  local root = util.git_root(selection.path) or vim.uv.cwd()
+function M.build(selection, config, workspace_root)
+  local root = workspace_root or util.git_root(selection.path) or vim.uv.cwd()
   local docs = find_docs(
     root,
     selection.path,
@@ -46,7 +46,7 @@ function M.build(selection, config)
 
   if config.btca.enabled then
     btca_skill = btca.skill_content(config.btca)
-    btca_repos = btca.list_repositories(config.btca)
+    btca_repos = btca.resolve_repositories(config.btca, root)
   end
 
   return {

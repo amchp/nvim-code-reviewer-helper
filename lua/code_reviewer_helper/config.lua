@@ -13,10 +13,8 @@ local defaults = {
     sandbox_dir = vim.fn.expand("~/.btca/agent/sandbox"),
     skill_path = vim.fn.expand("~/.agents/skills/btca-local/SKILL.md"),
     fallback_prompt = true,
-    repositories = {
-      "https://github.com/ThePrimeagen/99.git",
-      "https://github.com/pingdotgg/t3code.git",
-    },
+    repositories = {},
+    max_repositories = 5,
     auto_sync = false,
   },
   context = {
@@ -96,6 +94,9 @@ function M.normalize(user_opts)
   end
   if type(opts.btca.repositories) ~= "table" then
     error("btca.repositories must be a table")
+  end
+  if type(opts.btca.max_repositories) ~= "number" then
+    error("btca.max_repositories must be a number")
   end
   if type(opts.context.md_files) ~= "table" then
     error("context.md_files must be a table")

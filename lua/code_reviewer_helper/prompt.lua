@@ -101,9 +101,20 @@ function M.build(question, selection, context)
   if context.btca_repos and #context.btca_repos > 0 then
     local repo_lines = {}
     for _, repo in ipairs(context.btca_repos) do
-      table.insert(repo_lines, string.format("- %s: %s", repo.name, repo.path))
+      local sources = repo.sources and table.concat(repo.sources, ", ") or "unknown"
+      if repo.available then
+        table.insert(
+          repo_lines,
+          string.format("- available %s at %s (from %s)", repo.name, repo.path, sources)
+        )
+      else
+        table.insert(
+          repo_lines,
+          string.format("- not synced %s from %s", repo.name, sources)
+        )
+      end
     end
-    add_section(lines, "BTCA Local Repositories", repo_lines)
+    add_section(lines, "BTCA Dependency Repositories", repo_lines)
   end
 
   add_section(lines, "Response Requirements", {

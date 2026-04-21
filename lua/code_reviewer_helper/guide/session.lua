@@ -19,6 +19,9 @@ end
 
 local function resolve_workspace_seed()
   local current = vim.api.nvim_buf_get_name(0)
+  if current ~= "" and vim.startswith(current, "crh://guide") and state.guide_session and state.guide_session.workspace_root then
+    return state.guide_session.workspace_root
+  end
   if current ~= "" then
     if util.is_dir(current) then
       return current
@@ -26,6 +29,55 @@ local function resolve_workspace_seed()
     return vim.fn.fnamemodify(current, ":p:h")
   end
   return vim.uv.cwd()
+end
+
+local function current_return_target()
+  local winid = vim.api.nvim_get_current_win()
+  local tabpage = vim.api.nvim_get_current_tabpage()
+  local bufnr = vim.api.nvim_win_get_buf(winid)
+  local path = vim.api.nvim_buf_get_name(bufnr)
+
+  return {
+    winid = winid,
+    tabpage = tabpage,
+    bufnr = bufnr,
+    path = path ~= "" and path or nil,
+    cursor = vim.api.nvim_win_get_cursor(winid),
+  }
+end
+
+local function commit_info(git_root)
+  if not git_root then
+    return nil
+  end
+
+  local commit = util.system({
+    "git",
+    "-C",
+    git_root,
+    "log",
+    "-1",
+    "--pretty=format:%H%n%h%n%s",
+  })
+  if commit.code ~= 0 then
+    return nil
+  end
+
+  local lines = vim.split(commit.stdout or "", "\n", { plain = true })
+  local branch = util.system({
+    "git",
+    "-C",
+    git_root,
+    "branch",
+    "--show-current",
+  })
+
+  return {
+    hash = lines[1] or "",
+    short = lines[2] or "",
+    subject = lines[3] or "",
+    branch = util.trim(branch.stdout or ""),
+  }
 end
 
 function M.ensure_history_loaded()
@@ -45,12 +97,14 @@ local function finalize_session(parsed, context)
     summary = parsed.summary,
     plan_markdown = parsed.plan_markdown,
     items = parsed.items,
+    commit = commit_info(context.git_root),
+    resume_index = 1,
+    resume_path = parsed.items[1] and parsed.items[1].path or nil,
     created_at = timestamp(),
   }
 
   guide_history.load(context.workspace_root, state.config.guide)
   guide_history.add(session)
-  state.guide_session = session
   ui.open(session, state.config)
   util.notify(string.format("Guided review ready: %d files", #session.items))
   return session
@@ -93,9 +147,18 @@ function M.start()
   return request_id
 end
 
-function M.open(session)
-  state.guide_session = session
+function M.open(session, opts)
+  opts = opts or {}
+  state.guide_return_target = opts.capture_return_target and current_return_target() or nil
   ui.open(session, state.config)
+end
+
+function M.clear_history()
+  local history = M.ensure_history_loaded()
+  if not history then
+    return false
+  end
+  return guide_history.clear()
 end
 
 function M.open_plan()

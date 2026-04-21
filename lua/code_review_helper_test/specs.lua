@@ -36,6 +36,25 @@ local function commit_all(root, message)
   git(root, { "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", message })
 end
 
+local function seed_git_repo(root, files)
+  git(root, { "init" })
+  for path, content in pairs(files or {}) do
+    t.write(root .. "/" .. path, content)
+  end
+  commit_all(root, "seed")
+end
+
+local function create_bare_repo(name, files)
+  local source = t.tmp_dir(name .. "_source")
+  seed_git_repo(source, files or {
+    ["README.md"] = "# " .. name .. "\n",
+  })
+
+  local bare = t.tmp_dir(name .. "_bare_parent") .. "/" .. name .. ".git"
+  git(source, { "clone", "--bare", source, bare })
+  return bare
+end
+
 local function helper_with_guide_config(fake_bin, extra)
   local helper = t.load_helper()
   local root = t.tmp_dir("guide_workspace")
@@ -121,7 +140,100 @@ function M.tests()
         t.eq("codex", config.codex.bin)
         t.eq("gpt-5.4-mini", config.codex.model)
         t.eq(true, config.btca.enabled)
+        t.eq(0, #config.btca.repositories)
+        t.eq(5, config.btca.max_repositories)
         t.match("Explain this code", config.prompt.default_question)
+      end,
+    },
+    {
+      name = "btca resolves repositories from dependency manifests",
+      run = function()
+        local workspace = t.tmp_dir("btca_workspace")
+        t.write(workspace .. "/package.json", vim.json.encode({
+          dependencies = {
+            example = "https://github.com/acme/example.git#main",
+            widgets = "acme/widgets",
+          },
+        }))
+        t.write(workspace .. "/go.mod", table.concat({
+          "module demo",
+          "",
+          "require github.com/cli/go-gh v1.4.0",
+          "",
+        }, "\n"))
+
+        local repos = require("code_reviewer_helper.btca").resolve_repositories({
+          sandbox_dir = t.tmp_dir("btca_resolve"),
+          repositories = {},
+        }, workspace)
+
+        local names = {}
+        for _, repo in ipairs(repos) do
+          table.insert(names, repo.name)
+        end
+
+        t.eq(3, #repos)
+        t.match("github.com/acme/example", table.concat(names, "\n"))
+        t.match("github.com/acme/widgets", table.concat(names, "\n"))
+        t.match("github.com/cli/go%-gh", table.concat(names, "\n"))
+      end,
+    },
+    {
+      name = "btca prioritizes important repositories over low-signal ones",
+      run = function()
+        local workspace = t.tmp_dir("btca_priority_workspace")
+        t.write(workspace .. "/package.json", vim.json.encode({
+          dependencies = {
+            runtime = "acme/runtime-core",
+          },
+          devDependencies = {
+            tooling = "acme/dev-only",
+          },
+        }))
+
+        local repos = require("code_reviewer_helper.btca").resolve_repositories({
+          sandbox_dir = t.tmp_dir("btca_priority"),
+          repositories = { "https://github.com/acme/manual-important.git" },
+          max_repositories = 2,
+        }, workspace)
+
+        local names = {}
+        for _, repo in ipairs(repos) do
+          table.insert(names, repo.name)
+        end
+
+        t.eq(2, #repos)
+        t.match("github.com/acme/manual%-important", names[1])
+        t.match("github.com/acme/runtime%-core", table.concat(names, "\n"))
+        if table.concat(names, "\n"):match("github.com/acme/dev%-only") then
+          error("low-signal dev dependency should be excluded when max_repositories is reached")
+        end
+      end,
+    },
+    {
+      name = "btca sync clones discovered dependency repositories",
+      run = function()
+        local bare = create_bare_repo("dep_repo", {
+          ["lua/dep.lua"] = "return { value = 42 }\n",
+        })
+        local workspace = t.tmp_dir("btca_sync_workspace")
+        t.write(workspace .. "/package.json", vim.json.encode({
+          dependencies = {
+            dep = "git+file://" .. bare,
+          },
+        }))
+
+        local config = {
+          sandbox_dir = t.tmp_dir("btca_sync"),
+          repositories = {},
+        }
+        local btca = require("code_reviewer_helper.btca")
+        local messages = btca.sync(config, workspace)
+        local repos = btca.resolve_repositories(config, workspace)
+
+        t.match("cloned dep_repo", table.concat(messages, "\n"))
+        t.eq(1, #repos)
+        t.eq(true, repos[1].available)
       end,
     },
     {
@@ -161,12 +273,15 @@ function M.tests()
           btca_skill = "btca instructions",
           btca_repos = {
             {
-              name = "99",
+              name = "github.com/acme/example",
               path = "/tmp/99",
+              available = true,
+              sources = { "package.json" },
             },
           },
         })
         t.match("BTCA Instructions", prompt)
+        t.match("BTCA Dependency Repositories", prompt)
         t.match("README%.md", prompt)
         t.match("function_declaration", prompt)
         t.match("Give a short explanation, not a deep review", prompt)
@@ -528,6 +643,39 @@ function M.tests()
       end,
     },
     {
+      name = "completed explanations do not auto-open outside normal mode",
+      run = function()
+        local helper, root = helper_with_config({
+          codex = {
+            bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_sleep_short.sh",
+          },
+        })
+        local file = root .. "/slow_queue.lua"
+        t.write(file, "local one = 1\n")
+        local buf = t.new_buffer({ "local one = 1" }, file)
+
+        t.set_visual_marks(buf, 1, 1, 1, 13)
+        helper.explain_visual({
+          additional_prompt = "Question one",
+        })
+
+        vim.cmd("normal! v")
+        t.eq(true, vim.wait(2000, function()
+          return not require("code_reviewer_helper.util").mode_is_normal()
+        end))
+
+        t.eq(true, vim.wait(2000, function()
+          local entries = require("code_reviewer_helper.history").list()
+          return #entries == 1
+        end))
+        t.eq(nil, helper.__state().split_winid)
+        t.eq(nil, helper.__state().split_tabpage)
+        t.eq(nil, helper.__state().current_response_id)
+
+        vim.cmd("normal! \27")
+      end,
+    },
+    {
       name = "next closes the pane at the end of the queue",
       run = function()
         local helper, root = helper_with_config()
@@ -608,6 +756,101 @@ function M.tests()
       end,
     },
     {
+      name = "quitting response pane does not open the next response outside the original tab",
+      run = function()
+        local helper, root = helper_with_config()
+        local file = root .. "/tab_handoff.lua"
+        t.write(file, "local one = 1\nlocal two = 2\n")
+        local buf = t.new_buffer({
+          "local one = 1",
+          "local two = 2",
+        }, file)
+
+        t.set_visual_marks(buf, 1, 1, 1, 13)
+        helper.explain_visual({
+          additional_prompt = "Question one",
+        })
+        t.ok(vim.wait(2000, function()
+          return helper.__state().current_response_id ~= nil
+        end))
+
+        t.set_visual_marks(buf, 2, 1, 2, 13)
+        helper.explain_visual({
+          additional_prompt = "Question two",
+        })
+        t.ok(vim.wait(2000, function()
+          local entries = require("code_reviewer_helper.history").list()
+          return #entries == 2
+        end))
+
+        vim.cmd("tabnew")
+        local other_tab = vim.api.nvim_get_current_tabpage()
+        t.new_buffer({ "other tab" }, root .. "/other.lua")
+        vim.cmd("tabprevious")
+
+        vim.cmd("tabclose")
+
+        t.ok(vim.wait(2000, function()
+          return vim.api.nvim_get_current_tabpage() == other_tab
+        end))
+        t.eq(nil, helper.__state().split_winid)
+        t.eq(nil, helper.__state().split_tabpage)
+        t.eq(nil, helper.__state().current_response_id)
+
+        local buffer_names = {}
+        for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+          for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+            table.insert(buffer_names, vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win)))
+          end
+        end
+        t.ok(not table.concat(buffer_names, "\n"):match("crh://response/"))
+      end,
+    },
+    {
+      name = "quitting response pane in visual mode does not open the next response",
+      run = function()
+        local helper, root = helper_with_config()
+        local file = root .. "/insert_handoff.lua"
+        t.write(file, "local one = 1\nlocal two = 2\n")
+        local buf = t.new_buffer({
+          "local one = 1",
+          "local two = 2",
+        }, file)
+
+        t.set_visual_marks(buf, 1, 1, 1, 13)
+        helper.explain_visual({
+          additional_prompt = "Question one",
+        })
+        t.ok(vim.wait(2000, function()
+          return helper.__state().current_response_id ~= nil
+        end))
+
+        t.set_visual_marks(buf, 2, 1, 2, 13)
+        helper.explain_visual({
+          additional_prompt = "Question two",
+        })
+        t.ok(vim.wait(2000, function()
+          local entries = require("code_reviewer_helper.history").list()
+          return #entries == 2
+        end))
+
+        vim.cmd("normal! v")
+        t.eq(true, vim.wait(2000, function()
+          return not require("code_reviewer_helper.util").mode_is_normal()
+        end))
+
+        vim.api.nvim_win_close(helper.__state().split_winid, true)
+
+        t.wait(200)
+        t.eq(nil, helper.__state().split_winid)
+        t.eq(nil, helper.__state().split_tabpage)
+        t.eq(nil, helper.__state().current_response_id)
+        t.ok(not require("code_reviewer_helper.ui.split").is_open())
+
+        vim.cmd("normal! \27")
+      end,
+    },
+    {
       name = "reopening a closed response pane does not hit buffer name collisions",
       run = function()
         local helper, root = helper_with_config()
@@ -639,15 +882,15 @@ function M.tests()
       end,
     },
     {
-      name = "selection preview is truncated to 100 characters",
+      name = "selection preview is truncated to 1000 characters with ellipsis",
       run = function()
         local helper, root = helper_with_config()
         local file = root .. "/preview.lua"
-        local long_line = string.rep("x", 140)
+        local long_line = string.rep("x", 1100)
         t.write(file, long_line .. "\n")
         local buf = t.new_buffer({ long_line }, file)
 
-        t.set_visual_marks(buf, 1, 1, 1, 140)
+        t.set_visual_marks(buf, 1, 1, 1, 1100)
         helper.explain_visual({
           additional_prompt = "Preview length",
         })
@@ -657,7 +900,8 @@ function M.tests()
         end))
 
         local entries = require("code_reviewer_helper.history").list()
-        t.eq(100, #entries[1].selection_preview)
+        t.eq(1003, #entries[1].selection_preview)
+        t.match("%.%.%.$", entries[1].selection_preview)
       end,
     },
     {
@@ -885,6 +1129,90 @@ function M.tests()
       end,
     },
     {
+      name = "closing the explainer split restores the guide 20 80 layout",
+      run = function()
+        local helper, root = helper_with_guide_config(
+          "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh",
+          {
+            guide = {
+              use_diffview_if_available = false,
+            },
+          }
+        )
+        seed_repo_workspace(root)
+        commit_all(root, "seed")
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        helper.guide()
+        t.ok(wait_for_guide_session(helper))
+
+        local history = require("code_reviewer_helper.history")
+        history.load(root, helper.__state().config.history)
+        history.add({
+          id = "guide-response",
+          status = "success",
+          summary = "Explain this",
+          question = "Explain this",
+          path = "README.md",
+          filetype = "markdown",
+          range = {
+            start_row = 1,
+            start_col = 1,
+            end_row = 1,
+            end_col = 6,
+          },
+          selection_preview = "# Demo",
+          response_markdown = "Stub explanation",
+          created_at = "2026-04-20T00:00:00Z",
+          completed_at = "2026-04-20T00:00:01Z",
+        })
+
+        helper.open_last()
+        t.ok(helper.__state().split_winid ~= nil)
+
+        require("code_reviewer_helper.ui.split").close()
+        t.ok(vim.wait(1000, function()
+          if helper.__state().split_winid ~= nil then
+            return false
+          end
+
+          local guide_tabpage = helper.__state().guide_tabpage
+          local list_win = find_win_for_buf(guide_tabpage, helper.__state().guide_list_bufnr)
+          local code_win = nil
+          for _, win in ipairs(vim.api.nvim_tabpage_list_wins(guide_tabpage)) do
+            if win ~= list_win then
+              code_win = win
+              break
+            end
+          end
+
+          if not list_win or not code_win then
+            return false
+          end
+
+          local total_width = vim.api.nvim_win_get_width(list_win) + vim.api.nvim_win_get_width(code_win)
+          local ratio = vim.api.nvim_win_get_width(list_win) / total_width
+          return ratio > 0.18 and ratio < 0.3
+        end))
+
+        local guide_tabpage = helper.__state().guide_tabpage
+        local list_win = find_win_for_buf(guide_tabpage, helper.__state().guide_list_bufnr)
+        local code_win = nil
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(guide_tabpage)) do
+          if win ~= list_win then
+            code_win = win
+            break
+          end
+        end
+
+        t.ok(list_win ~= nil)
+        t.ok(code_win ~= nil)
+        local total_width = vim.api.nvim_win_get_width(list_win) + vim.api.nvim_win_get_width(code_win)
+        local ratio = vim.api.nvim_win_get_width(list_win) / total_width
+        t.ok(ratio > 0.18 and ratio < 0.3, string.format("unexpected list ratio after close: %.3f", ratio))
+      end,
+    },
+    {
       name = "changed-file fallback renders modified untracked deleted and renamed entries",
       run = function()
         local fake_bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_changes.sh"
@@ -1075,6 +1403,158 @@ function M.tests()
         t.ok(plan_buf ~= nil)
         local text = table.concat(vim.api.nvim_buf_get_lines(plan_buf, 0, -1, false), "\n")
         t.match("# Review Order", text)
+      end,
+    },
+    {
+      name = "guide history labels include the commit subject",
+      run = function()
+        local helper, root = helper_with_guide_config(
+          "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh",
+          {
+            guide = {
+              use_diffview_if_available = false,
+            },
+          }
+        )
+        seed_repo_workspace(root)
+        commit_all(root, "seed")
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        helper.guide()
+        t.ok(wait_for_guide_session(helper))
+
+        local seen_label
+        local original_select = vim.ui.select
+        vim.ui.select = function(items, opts, callback)
+          seen_label = items[1].label
+          callback(nil)
+        end
+
+        require("code_reviewer_helper.ui.guide_history").pick(function() end)
+        vim.ui.select = original_select
+
+        t.match("seed", seen_label or "")
+      end,
+    },
+    {
+      name = "guide history can be cleared",
+      run = function()
+        local helper, root = helper_with_guide_config(
+          "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh",
+          {
+            guide = {
+              persist = true,
+              use_diffview_if_available = false,
+            },
+          }
+        )
+        seed_repo_workspace(root)
+        commit_all(root, "seed")
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        helper.guide()
+        t.ok(wait_for_guide_session(helper))
+        local history_path = helper.__state().guide_history.path
+
+        t.ok(helper.clear_guide_history())
+        t.eq(0, #require("code_reviewer_helper.guide.history").list())
+        t.eq(false, require("code_reviewer_helper.util").file_exists(history_path))
+      end,
+    },
+    {
+      name = "opening guide history restores the original file when the guide closes",
+      run = function()
+        local helper, root = helper_with_guide_config(
+          "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh",
+          {
+            guide = {
+              use_diffview_if_available = false,
+            },
+          }
+        )
+        seed_repo_workspace(root)
+        commit_all(root, "seed")
+
+        local review_path = root .. "/plugin/code_reviewer_helper.lua"
+        local review_buf = t.new_buffer({ "return {}", "-- marker" }, review_path)
+        vim.api.nvim_win_set_cursor(0, { 2, 0 })
+
+        local sessions = require("code_reviewer_helper.guide.history").load(root, helper.__state().config.guide)
+        table.insert(sessions.entries, {
+          id = "saved-guide",
+          mode = "repo",
+          workspace_root = root,
+          summary = "saved summary",
+          plan_markdown = "# Review Order\n\n1. README.md",
+          items = {
+            { path = "README.md", reason = "start here", status = "repo" },
+          },
+          created_at = "2026-04-20T00:00:00Z",
+        })
+
+        local original_select = vim.ui.select
+        vim.ui.select = function(items, opts, callback)
+          callback(items[1])
+        end
+
+        local ok, err = pcall(function()
+          helper.open_guide_history()
+        end)
+        vim.ui.select = original_select
+        if not ok then
+          error(err)
+        end
+
+        t.ok(wait_for_guide_session(helper))
+        require("code_reviewer_helper.ui.guide").close()
+
+        t.eq(review_buf, vim.api.nvim_get_current_buf())
+        t.eq(review_path, vim.api.nvim_buf_get_name(0))
+        t.eq({ 2, 0 }, vim.api.nvim_win_get_cursor(0))
+      end,
+    },
+    {
+      name = "closing a guide saves the current file and reopening resumes there",
+      run = function()
+        local helper, root = helper_with_guide_config(
+          "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh",
+          {
+            guide = {
+              use_diffview_if_available = false,
+            },
+          }
+        )
+        seed_repo_workspace(root)
+        commit_all(root, "seed")
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        helper.guide()
+        t.ok(wait_for_guide_session(helper))
+
+        local guide_ui = require("code_reviewer_helper.ui.guide")
+        guide_ui.next_item()
+        local session = helper.__state().guide_session
+        local expected_path = session.items[2].path
+
+        t.ok(helper.close_guide())
+        t.eq(2, session.resume_index)
+        t.eq(expected_path, session.resume_path)
+
+        helper.open_last_guide()
+        t.eq(2, helper.__state().guide_current_index)
+
+        local guide_tabpage = helper.__state().guide_tabpage
+        local list_win = find_win_for_buf(guide_tabpage, helper.__state().guide_list_bufnr)
+        local content_win = nil
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(guide_tabpage)) do
+          if win ~= list_win then
+            content_win = win
+            break
+          end
+        end
+
+        t.ok(content_win ~= nil)
+        t.match(expected_path .. "$", vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(content_win)))
       end,
     },
     {

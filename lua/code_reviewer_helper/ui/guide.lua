@@ -1,3 +1,4 @@
+local guide_history = require("code_reviewer_helper.guide.history")
 local state = require("code_reviewer_helper.state")
 local util = require("code_reviewer_helper.util")
 
@@ -83,6 +84,38 @@ local function close_guide_tab()
   end
 end
 
+local function restore_return_target()
+  local target = state.guide_return_target
+  state.guide_return_target = nil
+  if not target then
+    return
+  end
+
+  if target.tabpage and vim.api.nvim_tabpage_is_valid(target.tabpage) then
+    pcall(vim.api.nvim_set_current_tabpage, target.tabpage)
+  end
+
+  if target.winid and vim.api.nvim_win_is_valid(target.winid) then
+    pcall(vim.api.nvim_set_current_win, target.winid)
+    if target.cursor then
+      pcall(vim.api.nvim_win_set_cursor, target.winid, target.cursor)
+    end
+    return
+  end
+
+  if target.path and target.path ~= "" then
+    pcall(vim.cmd, "edit " .. vim.fn.fnameescape(target.path))
+    if target.cursor then
+      pcall(vim.api.nvim_win_set_cursor, 0, target.cursor)
+    end
+    return
+  end
+
+  if target.bufnr and vim.api.nvim_buf_is_valid(target.bufnr) then
+    pcall(vim.api.nvim_set_current_buf, target.bufnr)
+  end
+end
+
 local function clear_guide_state()
   state.guide_tabpage = nil
   state.guide_list_bufnr = nil
@@ -92,6 +125,46 @@ end
 
 local function session_item(session, index)
   return session.items[index]
+end
+
+local function session_resume_index(session)
+  if not session or not session.items or #session.items == 0 then
+    return 1
+  end
+
+  local index = tonumber(session.resume_index) or 1
+  if session.resume_path and session.resume_path ~= "" then
+    for item_index, item in ipairs(session.items) do
+      if item.path == session.resume_path then
+        index = item_index
+        break
+      end
+    end
+  end
+
+  return clamp(index, 1, #session.items)
+end
+
+local function persist_session_progress()
+  local session = state.guide_session
+  if not session or not session.items or #session.items == 0 then
+    return
+  end
+  if not state.guide_tabpage or not vim.api.nvim_tabpage_is_valid(state.guide_tabpage) then
+    return
+  end
+  if not state.guide_current_index then
+    return
+  end
+
+  local index = session_resume_index({
+    items = session.items,
+    resume_index = state.guide_current_index,
+  })
+  local item = session_item(session, index)
+  session.resume_index = index
+  session.resume_path = item and item.path or nil
+  guide_history.update(session)
 end
 
 local function set_local_maps(buf)
@@ -343,6 +416,13 @@ local function apply_native_layout()
   vim.api.nvim_win_set_width(native.primary_winid, content_width)
 end
 
+function M.refresh_layout()
+  if not state.guide_tabpage or not vim.api.nvim_tabpage_is_valid(state.guide_tabpage) then
+    return
+  end
+  apply_native_layout()
+end
+
 local function open_native_tab(session)
   vim.cmd("tabnew")
   state.guide_tabpage = vim.api.nvim_get_current_tabpage()
@@ -371,7 +451,7 @@ local function open_native_tab(session)
 
   apply_native_layout()
 
-  state.guide_current_index = state.guide_current_index or 1
+  state.guide_current_index = state.guide_current_index or session_resume_index(session)
   render_current_native()
   vim.api.nvim_set_current_win(native.list_winid)
 end
@@ -388,6 +468,7 @@ end
 
 local function build_diffview_files(session)
   local working = {}
+  local selected_index = session_resume_index(session)
   for index, item in ipairs(session.items) do
     table.insert(working, {
       path = item.path,
@@ -395,7 +476,7 @@ local function build_diffview_files(session)
       status = item.status == "untracked" and "?" or item.status:sub(1, 1):upper(),
       left_null = item.status == "untracked" or item.status == "added",
       right_null = item.status == "deleted",
-      selected = index == 1,
+      selected = index == selected_index,
     })
   end
   return {
@@ -466,16 +547,17 @@ local function open_with_diffview(session)
   lib.add_view(view)
   view:open()
   state.guide_tabpage = vim.api.nvim_get_current_tabpage()
-  state.guide_current_index = 1
+  state.guide_current_index = session_resume_index(session)
   install_diffview_maps()
   return true
 end
 
 function M.open(session, config)
+  persist_session_progress()
   close_guide_tab()
   clear_guide_state()
   state.guide_session = session
-  state.guide_current_index = 1
+  state.guide_current_index = session_resume_index(session)
   ensure_plan_buffer(session)
 
   if session.mode == "changes" and config.guide.use_diffview_if_available then
@@ -507,11 +589,13 @@ function M.prev_item()
 end
 
 function M.close()
+  persist_session_progress()
   if state.guide_tabpage and vim.api.nvim_tabpage_is_valid(state.guide_tabpage) then
     pcall(vim.api.nvim_set_current_tabpage, state.guide_tabpage)
     pcall(vim.cmd, "tabclose")
   end
   clear_guide_state()
+  restore_return_target()
 end
 
 function M.open_plan()
@@ -525,7 +609,7 @@ function M.open_plan()
   vim.cmd("botright vsplit")
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(win, buf)
-  apply_native_layout()
+  M.refresh_layout()
 end
 
 function M.show_parse_failure(raw_response, err)

@@ -190,6 +190,10 @@ function M.mode_is_visual()
   return mode == "v" or mode == "V" or mode == "\22"
 end
 
+function M.mode_is_normal()
+  return vim.api.nvim_get_mode().mode == "n"
+end
+
 function M.capture_notifications(fn)
   local messages = {}
   local original = vim.notify

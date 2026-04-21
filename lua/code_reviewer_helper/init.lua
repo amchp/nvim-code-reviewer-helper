@@ -72,8 +72,22 @@ end
 local function start_explain(question, opts, selection)
   ensure_setup()
   local config = state.config
+  local workspace_root = util.git_root(selection.path) or vim.uv.cwd()
 
-  local context = context_mod.build(selection, config)
+  if config.btca.enabled and config.btca.auto_sync then
+    local messages = btca.sync(config.btca, workspace_root)
+    local failures = {}
+    for _, message in ipairs(messages) do
+      if vim.startswith(message, "failed ") then
+        table.insert(failures, message)
+      end
+    end
+    if #failures > 0 then
+      util.notify(table.concat(failures, "\n"), vim.log.levels.WARN)
+    end
+  end
+
+  local context = context_mod.build(selection, config, workspace_root)
   ensure_workspace_history(context.workspace_root)
 
   local final_question = question_or_default(question, config)
@@ -90,9 +104,6 @@ end
 
 function M.setup(opts)
   state.config = config_mod.normalize(opts)
-  if state.config.btca.enabled and state.config.btca.auto_sync then
-    btca.sync(state.config.btca)
-  end
   return state.config
 end
 
@@ -176,7 +187,12 @@ end
 
 function M.sync_btca()
   ensure_setup()
-  local messages = btca.sync(state.config.btca)
+  local buffer_path = vim.api.nvim_buf_get_name(0)
+  local workspace_root = buffer_path ~= "" and util.git_root(buffer_path) or nil
+  if not workspace_root then
+    workspace_root = util.git_root(vim.uv.cwd()) or vim.uv.cwd()
+  end
+  local messages = btca.sync(state.config.btca, workspace_root)
   util.notify(table.concat(messages, "\n"))
   return messages
 end
@@ -199,7 +215,9 @@ function M.open_guide_history()
     return
   end
   guide_history_ui.pick(function(entry)
-    guide_session.open(entry)
+    guide_session.open(entry, {
+      capture_return_target = true,
+    })
   end)
 end
 
@@ -210,7 +228,30 @@ function M.open_last_guide()
     util.notify("No saved guide sessions yet", vim.log.levels.INFO)
     return
   end
-  guide_session.open(sessions.entries[#sessions.entries])
+  guide_session.open(sessions.entries[#sessions.entries], {
+    capture_return_target = true,
+  })
+end
+
+function M.clear_guide_history()
+  ensure_setup()
+  if not guide_session.clear_history() then
+    util.notify("No saved guide sessions yet", vim.log.levels.INFO)
+    return false
+  end
+  util.notify("Cleared guided review history")
+  return true
+end
+
+function M.close_guide()
+  ensure_setup()
+  local ok, guide_ui = pcall(require, "code_reviewer_helper.ui.guide")
+  if not ok then
+    util.notify("Guide UI is not available", vim.log.levels.WARN)
+    return false
+  end
+  guide_ui.close()
+  return true
 end
 
 function M.open_guide_plan()

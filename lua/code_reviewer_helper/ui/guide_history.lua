@@ -13,13 +13,19 @@ function M.pick(callback)
 
   local items = {}
   for _, entry in ipairs(entries) do
+    local commit_label = "no git commit"
+    if entry.commit and entry.commit.subject and entry.commit.subject ~= "" then
+      local ref = entry.commit.short ~= "" and entry.commit.short or "HEAD"
+      commit_label = string.format("%s %s", ref, entry.commit.subject)
+    end
     table.insert(items, {
       entry = entry,
       label = string.format(
-        "%s [%s] %s files",
+        "%s [%s] %s files | %s",
         entry.mode,
         entry.id,
-        #entry.items
+        #entry.items,
+        commit_label
       ),
     })
   end

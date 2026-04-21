@@ -52,6 +52,36 @@ function M.add(entry)
   M.save()
 end
 
+function M.update(entry)
+  local history = state.guide_history
+  if not history or not entry or not entry.id then
+    return false
+  end
+
+  for index, existing in ipairs(history.entries) do
+    if existing.id == entry.id then
+      history.entries[index] = entry
+      M.save()
+      return true
+    end
+  end
+
+  return false
+end
+
+function M.clear()
+  local history = state.guide_history
+  if not history then
+    return false
+  end
+
+  history.entries = {}
+  if history.config.persist then
+    pcall(vim.uv.fs_unlink, history.path)
+  end
+  return true
+end
+
 function M.list()
   if not state.guide_history then
     return {}

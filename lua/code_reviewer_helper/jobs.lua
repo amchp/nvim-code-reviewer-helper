@@ -5,6 +5,7 @@ local state = require("code_reviewer_helper.state")
 local util = require("code_reviewer_helper.util")
 
 local M = {}
+local SELECTION_PREVIEW_LIMIT = 1000
 
 local function timestamp()
   return os.date("!%Y-%m-%dT%H:%M:%SZ")
@@ -26,7 +27,11 @@ local function selection_preview(selection)
   if not selection or not selection.selected_lines then
     return ""
   end
-  return table.concat(selection.selected_lines, "\n"):sub(1, 100)
+  local preview = table.concat(selection.selected_lines, "\n")
+  if #preview <= SELECTION_PREVIEW_LIMIT then
+    return preview
+  end
+  return preview:sub(1, SELECTION_PREVIEW_LIMIT) .. "..."
 end
 
 function M.submit(payload, config)
@@ -71,7 +76,7 @@ function M.submit(payload, config)
 
       state.active_jobs[id] = nil
       history.add(entry)
-      if not split.is_open() then
+      if not split.is_open() and split.should_auto_open() then
         split.render(entry, config, { focus = false })
       end
 

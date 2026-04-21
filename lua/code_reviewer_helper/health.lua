@@ -52,7 +52,26 @@ function M.run(config)
   end
 
   local repo_count = #btca.list_repositories(config.btca)
-  add_report(lines, "OK", string.format("BTCA sandbox contains %d repositories", repo_count))
+  add_report(lines, "OK", string.format("BTCA sandbox currently contains %d repositories", repo_count))
+
+  if workspace_root then
+    local workspace_repos = btca.resolve_repositories(config.btca, workspace_root)
+    local available_count = 0
+    for _, repo in ipairs(workspace_repos) do
+      if repo.available then
+        available_count = available_count + 1
+      end
+    end
+    add_report(
+      lines,
+        "OK",
+        string.format(
+        "current workspace resolves %d prioritized BTCA dependency repositories (%d available locally)",
+        #workspace_repos,
+        available_count
+      )
+    )
+  end
 
   add_report(lines, "WARN", "authentication is not probed live; run :CRHExplain to verify Codex session auth")
 

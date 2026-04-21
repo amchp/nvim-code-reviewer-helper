@@ -45,7 +45,7 @@ end, {
 vim.api.nvim_create_user_command("CRHBtcaSync", function()
   helper.sync_btca()
 end, {
-  desc = "Sync BTCA repositories",
+  desc = "Sync BTCA dependency repositories for the current workspace",
 })
 
 vim.api.nvim_create_user_command("CRHHealth", function()
@@ -70,6 +70,18 @@ vim.api.nvim_create_user_command("CRHGuideOpenLast", function()
   helper.open_last_guide()
 end, {
   desc = "Open the last guided review session",
+})
+
+vim.api.nvim_create_user_command("CRHGuideHistoryClear", function()
+  helper.clear_guide_history()
+end, {
+  desc = "Clear guided review session history for the current workspace",
+})
+
+vim.api.nvim_create_user_command("CRHGuideClose", function()
+  helper.close_guide()
+end, {
+  desc = "Close the current guided review and save the resume position",
 })
 
 vim.api.nvim_create_user_command("CRHGuidePlan", function()

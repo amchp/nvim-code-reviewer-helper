@@ -23,10 +23,10 @@ function M.run(config)
     add_report(lines, "ERROR", "git is not executable")
   end
 
-  if util.file_exists(config.btca.skill_path) then
+  if btca.ensure_skill(config.btca) then
     add_report(lines, "OK", "BTCA skill file is present")
   elseif config.btca.fallback_prompt then
-    add_report(lines, "WARN", "BTCA skill file is missing; fallback BTCA prompt will be used")
+    add_report(lines, "WARN", "BTCA skill file is missing and could not be installed; embedded BTCA prompt will be used")
   else
     add_report(lines, "ERROR", "BTCA skill file is missing and fallback is disabled")
   end

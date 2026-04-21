@@ -373,6 +373,24 @@ function M.skill_content(config)
   return nil
 end
 
+function M.ensure_skill(config)
+  local data = util.read_file(config.skill_path)
+  if data and data ~= "" then
+    return true
+  end
+  if not config.fallback_prompt then
+    return false
+  end
+
+  local ok = pcall(util.write_file, config.skill_path, fallback_prompt)
+  if not ok then
+    return false
+  end
+
+  data = util.read_file(config.skill_path)
+  return data ~= nil and data ~= ""
+end
+
 function M.list_repositories(config)
   if not util.is_dir(config.sandbox_dir) then
     return {}

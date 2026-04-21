@@ -16,8 +16,11 @@ local function add_section(lines, title, content)
 end
 
 function M.build(question, selection, context)
+  local scope = selection.scope or "selection"
+  local target = scope == "file" and "the current file in the repository" or "a selected piece of code"
+  local code_section = scope == "file" and "Current File" or "Selected Code"
   local lines = {
-    "You are helping a Neovim user understand a selected piece of code.",
+    "You are helping a Neovim user understand " .. target .. ".",
     "The task is explain-only. Do not propose edits unless the user explicitly asks.",
     "Give a short explanation, not a deep review or long walkthrough, unless the user explicitly asks for depth.",
     "Prefer repository evidence first. Use web documentation only when local context is insufficient.",
@@ -43,7 +46,7 @@ function M.build(question, selection, context)
     add_section(lines, "Nearest Symbol", selection.symbol)
   end
 
-  add_section(lines, "Selected Code", {
+  add_section(lines, code_section, {
     "```" .. selection.filetype,
     util.normalize_lines(selection.selected_lines),
     "```",

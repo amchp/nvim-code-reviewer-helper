@@ -45,12 +45,36 @@ local function question_or_default(input, config)
   return trimmed
 end
 
+local function require_question(input, missing_message)
+  local trimmed = util.trim(input)
+  if trimmed == "" then
+    util.notify(missing_message, vim.log.levels.ERROR)
+    return nil
+  end
+  return trimmed
+end
+
 local function capture_selection_or_notify(config)
   local selection, err = selection_mod.capture({
     require_visual_mode = config.prompt.require_visual_mode,
     allow_marks = true,
     max_selection_lines = config.context.max_selection_lines,
     surrounding_lines = config.context.surrounding_lines,
+    include_diagnostics = config.context.include_diagnostics,
+    include_symbol_context = config.context.include_symbol_context,
+  })
+
+  if not selection then
+    util.notify(err, vim.log.levels.ERROR)
+    return nil
+  end
+
+  return selection
+end
+
+local function capture_current_file_or_notify(config)
+  local selection, err = selection_mod.capture_current_file({
+    max_selection_lines = config.context.max_selection_lines,
     include_diagnostics = config.context.include_diagnostics,
     include_symbol_context = config.context.include_symbol_context,
   })
@@ -104,6 +128,9 @@ end
 
 function M.setup(opts)
   state.config = config_mod.normalize(opts)
+  if state.config.btca.enabled then
+    btca.ensure_skill(state.config.btca)
+  end
   return state.config
 end
 
@@ -128,6 +155,51 @@ function M.explain_visual(opts)
     start_explain(input, opts, selection)
   end)
   return nil
+end
+
+function M.ask_current_file(opts)
+  opts = opts or {}
+  ensure_setup()
+  local selection = capture_current_file_or_notify(state.config)
+  if not selection then
+    return nil
+  end
+
+  if opts.additional_prompt ~= nil then
+    local question = require_question(
+      opts.additional_prompt,
+      "A repo question is required for the current file action."
+    )
+    if not question then
+      return nil
+    end
+    return start_explain(question, opts, selection)
+  end
+
+  vim.ui.input({
+    prompt = "Repo question for current file: ",
+  }, function(input)
+    if input == nil then
+      return
+    end
+    local question = require_question(
+      input,
+      "A repo question is required for the current file action."
+    )
+    if not question then
+      return
+    end
+    start_explain(question, opts, selection)
+  end)
+  return nil
+end
+
+function M.explain(opts)
+  opts = opts or {}
+  if util.mode_is_visual() or opts.from_visual_command then
+    return M.explain_visual(opts)
+  end
+  return M.ask_current_file(opts)
 end
 
 function M.open_history()

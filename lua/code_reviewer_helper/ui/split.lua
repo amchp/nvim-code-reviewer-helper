@@ -150,7 +150,7 @@ local function apply_buffer_options(buf)
 end
 
 local function extend_preview(lines, entry)
-  table.insert(lines, "## Selected Code Preview")
+  table.insert(lines, "## Code Preview")
   table.insert(lines, "")
   table.insert(lines, "```" .. (entry.filetype or ""))
   for _, line in ipairs(vim.split(entry.selection_preview or "", "\n", { plain = true })) do

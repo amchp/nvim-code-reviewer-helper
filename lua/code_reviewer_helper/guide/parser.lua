@@ -11,8 +11,68 @@ local valid_status = {
   repo = true,
 }
 
+local function skip_string(text, index)
+  index = index + 1
+  while index <= #text do
+    local char = text:sub(index, index)
+    if char == "\\" then
+      index = index + 2
+    elseif char == '"' then
+      return index + 1
+    else
+      index = index + 1
+    end
+  end
+  return nil
+end
+
+local function extract_first_json_object(text, start_index)
+  local open_index = text:find("{", start_index, true)
+  if not open_index then
+    return nil
+  end
+
+  local depth = 0
+  local index = open_index
+  while index <= #text do
+    local char = text:sub(index, index)
+    if char == '"' then
+      index = skip_string(text, index)
+      if not index then
+        return nil
+      end
+    elseif char == "{" then
+      depth = depth + 1
+      index = index + 1
+    elseif char == "}" then
+      depth = depth - 1
+      index = index + 1
+      if depth == 0 then
+        return text:sub(open_index, index - 1), open_index, index - 1
+      end
+    else
+      index = index + 1
+    end
+  end
+
+  return nil
+end
+
 local function parse_json_block(response)
-  return response:match("```json%s*(.-)%s*```")
+  local fenced_start, fenced_content_start = response:find("```json%s*")
+  if fenced_start then
+    local json, _, json_end = extract_first_json_object(response, fenced_content_start + 1)
+    if json then
+      return json, json_end
+    end
+  end
+
+  local json, _, json_end = extract_first_json_object(response, 1)
+  if json then
+    return json, json_end
+  end
+
+  return nil
 end
 
 local function parse_markdown(response)

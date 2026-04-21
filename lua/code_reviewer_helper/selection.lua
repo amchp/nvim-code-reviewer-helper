@@ -189,6 +189,7 @@ function M.capture(opts)
 
   local data = {
     bufnr = bufnr,
+    scope = "selection",
     path = vim.api.nvim_buf_get_name(bufnr),
     filetype = vim.bo[bufnr].filetype,
     range = {
@@ -210,6 +211,56 @@ function M.capture(opts)
 
   if opts.include_diagnostics then
     data.diagnostics = collect_diagnostics(bufnr, start_pos.row, end_pos.row)
+  else
+    data.diagnostics = {}
+  end
+
+  return data
+end
+
+function M.capture_current_file(opts)
+  opts = opts or {}
+  local bufnr = vim.api.nvim_get_current_buf()
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  if #lines == 0 then
+    lines = { "" }
+  end
+
+  if opts.max_selection_lines and #lines > opts.max_selection_lines then
+    return nil, string.format(
+      "Current file is too large (%d lines). Limit is %d lines.",
+      #lines,
+      opts.max_selection_lines
+    )
+  end
+
+  local end_row = #lines
+  local end_col = math.max(#lines[end_row], 1)
+  local data = {
+    bufnr = bufnr,
+    scope = "file",
+    path = vim.api.nvim_buf_get_name(bufnr),
+    filetype = vim.bo[bufnr].filetype,
+    range = {
+      start_row = 1,
+      start_col = 1,
+      end_row = end_row,
+      end_col = end_col,
+    },
+    selected_lines = lines,
+    surrounding_lines = {
+      before = {},
+      after = {},
+    },
+  }
+
+  if opts.include_symbol_context then
+    data.symbol = find_symbol()
+  end
+
+  if opts.include_diagnostics then
+    data.diagnostics = collect_diagnostics(bufnr, 1, end_row)
   else
     data.diagnostics = {}
   end

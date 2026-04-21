@@ -7,6 +7,7 @@ Neovim plugin for visually selecting code and asking Codex for short explanation
 - Captures a visual selection plus surrounding code.
 - Adds workspace docs such as `AGENTS.md` and `README.md`.
 - Discovers dependency repositories from the active workspace and exposes synced clones from `~/.btca/agent/sandbox`.
+- Auto-installs the BTCA skill into Codex's global skills directory when it is missing.
 - Runs `codex exec` in explain-only mode with `gpt-5.4-mini` by default.
 - Opens the response in a reusable right-side markdown split.
 - Wraps long lines in that response split so the explanation stays readable.
@@ -42,6 +43,10 @@ Neovim `0.11+` is recommended.
     vim.keymap.set("v", "<leader>ce", function()
       require("code_reviewer_helper").explain_visual()
     end, { desc = "Explain selected code" })
+
+    vim.keymap.set("n", "<leader>e", "<cmd>CRHExplain<cr>", {
+      desc = "Ask repo question about current file",
+    })
   end,
 }
 ```
@@ -66,6 +71,10 @@ require("code_reviewer_helper").setup({
 vim.keymap.set("v", "<leader>ce", function()
   require("code_reviewer_helper").explain_visual()
 end, { desc = "Explain selected code" })
+
+vim.keymap.set("n", "<leader>e", "<cmd>CRHExplain<cr>", {
+  desc = "Ask repo question about current file",
+})
 ```
 
 ## Minimal Config
@@ -88,6 +97,10 @@ require("code_reviewer_helper").setup({
 vim.keymap.set("v", "<leader>ce", function()
   require("code_reviewer_helper").explain_visual()
 end, { desc = "Explain selected code" })
+
+vim.keymap.set("n", "<leader>e", "<cmd>CRHExplain<cr>", {
+  desc = "Ask repo question about current file",
+})
 ```
 
 ## Local Install For Testing
@@ -114,6 +127,8 @@ For this local-path setup, you do not reinstall after code changes. Neovim is re
 8. Run `:CRHHistory` and reopen the saved response.
 
 `:CRHExplain` opens with an empty input box. If you submit it blank, the plugin falls back to its internal default question. If you type a question, that exact question is used.
+
+When `:CRHExplain` runs in normal mode, it asks for a repo-level question about the current file. That prompt requires a non-empty question and sends the whole current file as context.
 
 ## Commands
 
@@ -199,7 +214,7 @@ Otherwise run `:CRHBtcaSync` from inside the repository you are reviewing.
 
 - `codex` binary is executable
 - `git` is executable
-- BTCA skill file exists, or fallback BTCA prompt is enabled
+- BTCA skill file exists, or can be installed from embedded BTCA instructions
 - BTCA sandbox directory exists or can be created
 - current buffer resolves to a workspace root
 - whether visual mode is currently active
@@ -224,11 +239,11 @@ The plugin now biases the prompt toward short answers with a small `Sources` sec
 
 ### No visual selection found
 
-Start in visual mode, select the lines, and run `:CRHExplain` from that selection or from a visual keymap.
+This only applies to the visual-selection flow. Start in visual mode, select the lines, and run `:CRHExplain` from that selection or from a visual keymap. In normal mode, `:CRHExplain` asks a repo question about the current file instead.
 
 ### BTCA skill file missing
 
-The plugin falls back to embedded BTCA instructions by default. If you want strict behavior, set:
+The plugin tries to install the BTCA skill file automatically from its embedded BTCA instructions. If you want strict behavior, set:
 
 ```lua
 require("code_reviewer_helper").setup({

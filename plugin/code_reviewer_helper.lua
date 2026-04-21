@@ -3,10 +3,12 @@ if not ok then
   return
 end
 
-vim.api.nvim_create_user_command("CRHExplain", function()
-  helper.explain_visual()
+vim.api.nvim_create_user_command("CRHExplain", function(opts)
+  helper.explain({
+    from_visual_command = opts.range > 0,
+  })
 end, {
-  desc = "Explain the current visual selection with Codex",
+  desc = "Explain the current selection, or ask a repo question about the current file",
   range = true,
 })
 

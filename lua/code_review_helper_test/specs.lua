@@ -383,6 +383,25 @@ function M.tests()
       end,
     },
     {
+      name = "setup installs the BTCA skill file when missing",
+      run = function()
+        local helper = t.load_helper()
+        local skill_path = t.tmp_dir("btca_install") .. "/SKILL.md"
+
+        helper.setup({
+          btca = {
+            sandbox_dir = t.tmp_dir("btca_install_sandbox"),
+            skill_path = skill_path,
+          },
+          history = { persist = false },
+        })
+
+        t.eq(true, require("code_reviewer_helper.util").file_exists(skill_path))
+        local content = require("code_reviewer_helper.util").read_file(skill_path) or ""
+        t.match("BTCA Local instructions", content)
+      end,
+    },
+    {
       name = "successful explain request writes history and response buffer",
       run = function()
         local helper, root = helper_with_config()
@@ -426,7 +445,7 @@ function M.tests()
         end
         t.match("## Question", split_text)
         t.match("Explain this", split_text)
-        t.match("## Selected Code Preview", split_text)
+        t.match("## Code Preview", split_text)
         t.match("local function demo%(", split_text)
       end,
     },
@@ -499,6 +518,93 @@ function M.tests()
 
         local entries = require("code_reviewer_helper.history").list()
         t.eq("What is the main dependency here?", entries[1].question)
+      end,
+    },
+    {
+      name = "normal mode explain rejects blank current-file question",
+      run = function()
+        local helper, root = helper_with_config()
+        local file = root .. "/repo_question.lua"
+        t.write(file, "local alpha = 1\nlocal beta = 2\n")
+        t.new_buffer({
+          "local alpha = 1",
+          "local beta = 2",
+        }, file)
+
+        local captured_opts
+        local notifications = {}
+        local original_input = vim.ui.input
+        local original_notify = vim.notify
+        vim.ui.input = function(opts, callback)
+          captured_opts = opts
+          callback("")
+        end
+        vim.notify = function(msg, level, opts)
+          table.insert(notifications, {
+            msg = msg,
+            level = level,
+            opts = opts,
+          })
+        end
+
+        local ok, err = pcall(function()
+          helper.explain()
+          vim.wait(200, function()
+            return #notifications > 0
+          end)
+        end)
+        vim.ui.input = original_input
+        vim.notify = original_notify
+
+        if not ok then
+          error(err)
+        end
+
+        t.eq("Repo question for current file: ", captured_opts.prompt)
+        t.eq(1, #notifications)
+        t.match("repo question is required", notifications[1].msg)
+        local entries = require("code_reviewer_helper.history").list()
+        t.eq(0, #entries)
+      end,
+    },
+    {
+      name = "normal mode explain sends the whole current file",
+      run = function()
+        local helper, root = helper_with_config()
+        local file = root .. "/repo_file.lua"
+        t.write(file, "local alpha = 1\nlocal beta = 2\nreturn alpha + beta\n")
+        t.new_buffer({
+          "local alpha = 1",
+          "local beta = 2",
+          "return alpha + beta",
+        }, file)
+
+        local original_input = vim.ui.input
+        vim.ui.input = function(_, callback)
+          callback("How does this file fit into the repo?")
+        end
+
+        local ok, err = pcall(function()
+          helper.explain()
+          vim.wait(2000, function()
+            local entries = require("code_reviewer_helper.history").list()
+            return #entries == 1
+          end)
+        end)
+        vim.ui.input = original_input
+
+        if not ok then
+          error(err)
+        end
+
+        local entries = require("code_reviewer_helper.history").list()
+        t.eq(1, #entries)
+        t.eq("How does this file fit into the repo?", entries[1].question)
+        t.eq(file, entries[1].path)
+        t.eq(1, entries[1].range.start_row)
+        t.eq(3, entries[1].range.end_row)
+        t.match("local alpha = 1", entries[1].selection_preview)
+        t.match("return alpha %+ beta", entries[1].selection_preview)
       end,
     },
     {
@@ -603,7 +709,7 @@ function M.tests()
         t.match("# Code Review Helper", split_text)
         t.match("## Saved Questions", split_text)
         t.match("## Question", split_text)
-        t.match("## Selected Code Preview", split_text)
+        t.match("## Code Preview", split_text)
         t.match("## stderr", split_text)
       end,
     },
@@ -994,6 +1100,22 @@ function M.tests()
         t.eq("repo", parsed.mode)
         t.eq("demo", parsed.summary)
         t.eq(1, #parsed.items)
+
+        local recovered
+        recovered, err = parser.parse([[
+```json
+{"mode":"repo","summary":"demo","items":[{"path":"README.md","reason":"first","status":"repo","old_path":null}]}
+# Review Order
+
+1. README
+        ]], {
+          valid_paths = { ["README.md"] = true },
+        })
+        t.eq(nil, err)
+        t.eq("repo", recovered.mode)
+        t.eq("demo", recovered.summary)
+        t.eq(1, #recovered.items)
+        t.match("# Review Order", recovered.plan_markdown)
 
         local invalid, err = parser.parse("nope", {
           valid_paths = {},

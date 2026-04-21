@@ -1,22 +1,24 @@
-# code-reviewer-helper
+# nvim-code-reviewer-helper
 
-Neovim plugin for visually selecting code and asking Codex for short explanations with citations, using local repo context, BTCA-style instructions, and optional web documentation.
+Neovim plugin for asking Codex to explain selected code, answer questions about the current file, and generate guided review plans using local repository context.
 
-## What It Does
+## Features
 
-- Captures a visual selection plus surrounding code.
-- Adds workspace docs such as `AGENTS.md` and `README.md`.
-- Discovers dependency repositories from the active workspace and exposes synced clones from `~/.btca/agent/sandbox`.
-- Auto-installs the BTCA skill into Codex's global skills directory when it is missing.
-- Runs `codex exec` in explain-only mode with `gpt-5.4-mini` by default.
-- Opens the response in a reusable right-side markdown split.
-- Wraps long lines in that response split so the explanation stays readable.
-- Prefers local file citations and only leans on web docs when they materially help.
-- Saves responses so you can reopen them later with `:CRHHistory`.
-- Adds `:CRHGuide` to build a guided review order for either current git changes or the whole repository.
-- Opens a guided review tab with an ordered file list and either a single-file pane or a diff-style view.
+- Explains a visual selection with surrounding code, diagnostics, symbol context, and nearby docs such as `README.md` or `AGENTS.md`.
+- Supports file-level questions from normal mode when you want repository context for the current buffer.
+- Runs `codex exec` locally and writes the final answer into a reusable markdown split inside Neovim.
+- Saves explain responses and guided review sessions so they can be reopened later.
+- Builds guided review plans with `:CRHGuide` for either current git changes or a first-pass repo walkthrough.
+- Integrates BTCA-style dependency repository context through a local sandbox, with optional auto-sync.
+- Uses web search with Codex by default, while still preferring local repository evidence and file citations.
 
-## Prerequisites
+## Requirements
+
+- Neovim `0.11+`
+- `codex` installed and authenticated
+- `git`
+
+Before using the plugin:
 
 ```bash
 codex login
@@ -24,262 +26,153 @@ codex --help
 git --version
 ```
 
-Neovim `0.11+` is recommended.
+## Installation
 
-## Install From GitHub With `lazy.nvim`
-
-If you publish this repo on GitHub, users should install it with `lazy.nvim`.
-`lazygit` is only a Git UI, so people can clone the repo with it, but Neovim
-plugin installation still happens through `lazy.nvim` or native `packpath`.
+### `lazy.nvim`
 
 ```lua
 {
-  "your-github-username/code-reviewer-helper",
-  name = "code-reviewer-helper",
-  dependencies = {},
+  "amchp/nvim-code-reviewer-helper",
+  dependencies = {
+    -- Optional, used for changed-file guide sessions
+    "sindrets/diffview.nvim",
+  },
   config = function()
-    require("code_reviewer_helper").setup({
-      btca = {
-        enabled = true,
-      },
-    })
+    require("code_reviewer_helper").setup()
 
     vim.keymap.set("v", "<leader>ce", function()
       require("code_reviewer_helper").explain_visual()
     end, { desc = "Explain selected code" })
 
-    vim.keymap.set("n", "<leader>e", "<cmd>CRHExplain<cr>", {
-      desc = "Ask repo question about current file",
+    vim.keymap.set("n", "<leader>ce", "<cmd>CRHExplain<cr>", {
+      desc = "Ask about current file",
+    })
+
+    vim.keymap.set("n", "<leader>cg", "<cmd>CRHGuide<cr>", {
+      desc = "Start guided review",
     })
   end,
 }
 ```
 
-Replace `your-github-username` with the actual GitHub owner or organization.
-
-## Install With Native Packpath
-
-After publishing the repo, users can also install it without a plugin manager:
+### Native packpath
 
 ```bash
 mkdir -p ~/.local/share/nvim/site/pack/local/start
-git clone https://github.com/your-github-username/code-reviewer-helper.git \
-  ~/.local/share/nvim/site/pack/local/start/code-reviewer-helper
+git clone https://github.com/amchp/nvim-code-reviewer-helper.git \
+  ~/.local/share/nvim/site/pack/local/start/nvim-code-reviewer-helper
 ```
 
-Then add this to your Neovim config:
+Then in your Neovim config:
 
 ```lua
-require("code_reviewer_helper").setup({
-  btca = {
-    enabled = true,
-  },
-})
-
-vim.keymap.set("v", "<leader>ce", function()
-  require("code_reviewer_helper").explain_visual()
-end, { desc = "Explain selected code" })
-
-vim.keymap.set("n", "<leader>e", "<cmd>CRHExplain<cr>", {
-  desc = "Ask repo question about current file",
-})
+require("code_reviewer_helper").setup()
 ```
 
-## Install From A Local Checkout
+## Basic Usage
 
-```bash
-mkdir -p ~/.local/share/nvim/site/pack/local/start
-ln -s /home/automac/Documents/Projects/code-reviewer-helper \
-  ~/.local/share/nvim/site/pack/local/start/code-reviewer-helper
-```
+- `:CRHExplain`
+  In visual mode, prompts for an optional question and explains the selection.
+  In normal mode, asks for a required repo-level question about the current file.
+- `:CRHHistory`
+  Opens saved explain responses.
+- `:CRHOpenLast`
+  Reopens the most recent explain response.
+- `:CRHGuide`
+  Generates a guided review plan for current changes or the whole repo.
+- `:CRHGuideHistory`
+  Opens saved guided review sessions.
+- `:CRHGuideOpenLast`
+  Reopens the most recent guided review.
+- `:CRHGuidePlan`
+  Opens the markdown plan for the active guided review.
+- `:CRHGuideClose`
+  Closes the guide and saves the current resume position.
+- `:CRHGuideHistoryClear`
+  Clears saved guided review history for the current workspace.
+- `:CRHBtcaAddRepo [url]`
+  Adds a repository URL to the BTCA context list for the current workspace.
+- `:CRHHealth`
+  Runs environment and integration checks.
+- `:CRHNext`, `:CRHPrev`, `:CRHCancel`
+  Navigate or cancel explain jobs.
 
-## Minimal Config
+## Minimal Setup
 
 ```lua
 require("code_reviewer_helper").setup({
   codex = {
     bin = "codex",
     model = "gpt-5.4-mini",
+    sandbox = "workspace-write",
+    use_web_search = true,
   },
   btca = {
     enabled = true,
-  },
-})
-```
-
-## Recommended Visual Keymap
-
-```lua
-vim.keymap.set("v", "<leader>ce", function()
-  require("code_reviewer_helper").explain_visual()
-end, { desc = "Explain selected code" })
-
-vim.keymap.set("n", "<leader>e", "<cmd>CRHExplain<cr>", {
-  desc = "Ask repo question about current file",
-})
-```
-
-## Local Install For Testing
-
-Use the `lazy.nvim` or native packpath setup above with the exact local path:
-
-`/home/automac/Documents/Projects/code-reviewer-helper`
-
-For this local-path setup, you do not reinstall after code changes. Neovim is reading the plugin directly from this repo.
-
-- If you edit the plugin while Neovim is closed: just reopen Neovim.
-- If Neovim is already open: restart it to pick up Lua/module changes reliably.
-- If you use the native packpath symlink, the same rule applies: update the repo, then restart Neovim.
-
-## How To Test The Plugin Locally
-
-1. Open Neovim inside any git repo.
-2. Run `:CRHHealth`.
-3. Open a source file.
-4. Enter visual mode and select a few lines.
-5. Run `:CRHExplain`.
-6. Press Enter for the internal fallback question, or type your own question.
-7. Confirm the markdown explanation appears in the right split with short output and citations.
-8. Run `:CRHHistory` and reopen the saved response.
-
-`:CRHExplain` opens with an empty input box. If you submit it blank, the plugin falls back to its internal default question. If you type a question, that exact question is used.
-
-When `:CRHExplain` runs in normal mode, it asks for a repo-level question about the current file. That prompt requires a non-empty question and sends the whole current file as context.
-
-## Commands
-
-- `:CRHExplain`
-- `:CRHHistory`
-- `:CRHOpenLast`
-- `:CRHNext`
-- `:CRHPrev`
-- `:CRHCancel`
-- `:CRHBtcaAddRepo [url]`
-- `:CRHHealth`
-- `:CRHGuide`
-- `:CRHGuideHistory`
-- `:CRHGuideOpenLast`
-- `:CRHGuideHistoryClear`
-- `:CRHGuideClose`
-- `:CRHGuidePlan`
-
-## Guided Review
-
-Run `:CRHGuide` from inside a repository to ask Codex for the best order to understand the current changes or, if the repo is clean, the best first-pass order for understanding the codebase.
-
-- If `git status --porcelain=v1 --untracked-files=all` is non-empty, the guide starts in `changes` mode.
-- Otherwise it starts in `repo` mode.
-- The session stores a markdown plan under Neovim state and reopens it with `:CRHGuidePlan`.
-- Saved guide history records the HEAD commit name for git-backed walkthroughs.
-- If `diffview.nvim` is installed, changed-file sessions use Diffview's custom diff view API.
-- Without `diffview.nvim`, the plugin falls back to a native tab with a left file list and right content panes.
-- Closing a guide saves the current file position, and `:CRHGuideOpenLast` resumes from that file.
-
-Within a guide session:
-
-- `<Tab>` moves to the next file.
-- `<S-Tab>` moves to the previous file.
-- `gp` opens the guide plan.
-- `q` closes the guide tab.
-
-Useful guide commands:
-
-- `:CRHGuideOpenLast` reopens the last saved guide at its last saved file.
-- `:CRHGuideClose` closes the guide and saves the current file as the resume point.
-- `:CRHGuideHistoryClear` clears saved guide history for the current workspace.
-
-## BTCA Dependency Repositories
-
-`BTCA` no longer seeds the sandbox with fixed example repositories.
-
-Instead, the plugin resolves repositories from the current workspace, keeps a small high-signal subset, and uses the sandbox for synced dependency clones that Codex can inspect alongside your project.
-
-Current discovery is intentionally conservative:
-
-- `package.json` direct git or GitHub-style dependencies
-- `go.mod` dependencies hosted on `github.com`, `gitlab.com`, or `bitbucket.org`
-- `Cargo.toml` dependencies with explicit `git = "..."`
-- `pyproject.toml` and `requirements.txt` git-based dependencies
-- optional manual extras from `btca.repositories`
-- workspace-specific repos added with `:CRHBtcaAddRepo`
-
-The plugin does not sync every discovered repo by default. It ranks candidates and keeps the most important few, preferring manual entries and runtime dependencies over lower-signal sources like dev-only dependencies.
-
-You can tune the shortlist size with:
-
-```lua
-require("code_reviewer_helper").setup({
-  btca = {
+    auto_sync = false,
     max_repositories = 5,
   },
 })
 ```
 
-If you want the sandbox kept up to date automatically before each explain request, enable:
+## Guided Review
 
-```lua
-require("code_reviewer_helper").setup({
-  btca = {
-    auto_sync = true,
-  },
-})
-```
+`:CRHGuide` inspects the current workspace and chooses a mode automatically:
 
-To add a repo directly by URL for the current workspace, run:
+- If the git worktree has tracked or untracked changes, it generates a review plan for those changes.
+- If the worktree is clean, it generates a first-pass walkthrough for the repository.
+
+Guide sessions are persisted under Neovim state, and the plugin can reopen the last session at the saved file position. If `diffview.nvim` is installed, changed-file guide sessions use Diffview; otherwise the plugin falls back to its native tab UI.
+
+## BTCA Repository Context
+
+When BTCA is enabled, the plugin can include extra repository context from a local sandbox directory. It resolves likely dependency repositories from files such as:
+
+- `package.json`
+- `go.mod`
+- `Cargo.toml`
+- `pyproject.toml`
+- `requirements.txt`
+
+You can also add repositories manually:
 
 ```vim
 :CRHBtcaAddRepo https://github.com/owner/repo
 ```
 
-If you omit the argument, the command prompts for the URL. Added repos are stored under Neovim state per workspace and are included in future BTCA resolution for that workspace. For automatic refresh of discovered repos, enable `btca.auto_sync`.
-
-## What `:CRHHealth` Checks
-
-- `codex` binary is executable
-- `git` is executable
-- BTCA skill file exists, or can be installed from embedded BTCA instructions
-- BTCA sandbox directory exists or can be created
-- current buffer resolves to a workspace root
-- whether visual mode is currently active
-- how many BTCA repos are already visible in the sandbox
-- how many prioritized dependency repositories the current workspace resolves
-
-It does not send a live Codex request, so authentication is only inferred from local setup. The real end-to-end auth check is running `:CRHExplain`.
-
-## Troubleshooting
-
-### `codex` not found
-
-Set `codex.bin` in `setup()` to the full executable path.
-
-### Codex auth fails during `:CRHExplain`
-
-Run `codex login` in a terminal, then retry.
-
-### Explanations are still too long
-
-The plugin now biases the prompt toward short answers with a small `Sources` section. If you want even shorter responses, ask a narrower question in the prompt box.
-
-### No visual selection found
-
-This only applies to the visual-selection flow. Start in visual mode, select the lines, and run `:CRHExplain` from that selection or from a visual keymap. In normal mode, `:CRHExplain` asks a repo question about the current file instead.
-
-### BTCA skill file missing
-
-The plugin tries to install the BTCA skill file automatically from its embedded BTCA instructions. If you want strict behavior, set:
+Useful BTCA options:
 
 ```lua
 require("code_reviewer_helper").setup({
   btca = {
-    fallback_prompt = false,
+    enabled = true,
+    auto_sync = true,
+    max_repositories = 5,
+    sandbox_dir = vim.fn.expand("~/.btca/agent/sandbox"),
   },
 })
 ```
 
+## Health Check
+
+`:CRHHealth` verifies:
+
+- `codex` is executable
+- `git` is executable
+- the BTCA skill is installed or a fallback prompt is available
+- the BTCA sandbox directory is writable
+- the current workspace root can be resolved
+
+It does not perform a live authentication probe; run `:CRHExplain` to confirm your active Codex session works end-to-end.
+
 ## Development
 
-Run the headless tests with:
+Run tests with:
 
 ```bash
 make test
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

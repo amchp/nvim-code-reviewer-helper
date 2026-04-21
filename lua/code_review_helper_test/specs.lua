@@ -237,6 +237,40 @@ function M.tests()
       end,
     },
     {
+      name = "btca add manual repository persists and deduplicates per workspace",
+      run = function()
+        local bare = create_bare_repo("manual_dep", {
+          ["README.md"] = "# Manual dep\n",
+        })
+        local workspace = t.tmp_dir("btca_add_workspace")
+        local config = {
+          sandbox_dir = t.tmp_dir("btca_add_sandbox"),
+          repositories = {},
+          max_repositories = 5,
+        }
+        local btca = require("code_reviewer_helper.btca")
+
+        local ok, message = btca.add_manual_repository(config, workspace, "git+file://" .. bare)
+        t.eq(true, ok)
+        t.match("added manual_dep", message)
+        t.match("cloned manual_dep", message)
+
+        ok, message = btca.add_manual_repository(config, workspace, "file://" .. bare)
+        t.eq(true, ok)
+        t.match("already added manual_dep", message)
+
+        local saved = btca.manual_repositories(workspace)
+        t.eq(1, #saved)
+        t.eq("file://" .. bare, saved[1])
+
+        local repos = btca.resolve_repositories(config, workspace)
+        t.eq(1, #repos)
+        t.eq("manual_dep", repos[1].name)
+        t.eq(true, repos[1].available)
+        t.match("btca.added", table.concat(repos[1].sources, "\n"))
+      end,
+    },
+    {
       name = "prompt includes BTCA and docs",
       run = function()
         local prompt = require("code_reviewer_helper.prompt").build("why", {
@@ -399,6 +433,31 @@ function M.tests()
         t.eq(true, require("code_reviewer_helper.util").file_exists(skill_path))
         local content = require("code_reviewer_helper.util").read_file(skill_path) or ""
         t.match("BTCA Local instructions", content)
+      end,
+    },
+    {
+      name = "helper add_btca_repo adds a repository for the current workspace",
+      run = function()
+        local helper, root = helper_with_config()
+        local bare = create_bare_repo("helper_dep", {
+          ["lua/helper_dep.lua"] = "return true\n",
+        })
+        local file = root .. "/README.md"
+        t.write(file, "# Workspace\n")
+        local buf = t.new_buffer({ "# Workspace" }, file)
+        vim.api.nvim_set_current_buf(buf)
+
+        local ok, message = helper.add_btca_repo("file://" .. bare)
+        t.eq(true, ok)
+        t.match("added helper_dep", message)
+
+        local repos = require("code_reviewer_helper.btca").resolve_repositories(
+          helper.__state().config.btca,
+          root
+        )
+        t.eq(1, #repos)
+        t.eq("helper_dep", repos[1].name)
+        t.eq(true, repos[1].available)
       end,
     },
     {
@@ -1332,6 +1391,107 @@ function M.tests()
         local total_width = vim.api.nvim_win_get_width(list_win) + vim.api.nvim_win_get_width(code_win)
         local ratio = vim.api.nvim_win_get_width(list_win) / total_width
         t.ok(ratio > 0.18 and ratio < 0.3, string.format("unexpected list ratio after close: %.3f", ratio))
+      end,
+    },
+    {
+      name = "handoff to the next explainer response preserves the three-pane layout",
+      run = function()
+        local helper, root = helper_with_guide_config(
+          "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh",
+          {
+            guide = {
+              use_diffview_if_available = false,
+            },
+          }
+        )
+        seed_repo_workspace(root)
+        commit_all(root, "seed")
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        helper.guide()
+        t.ok(wait_for_guide_session(helper))
+
+        local guide_tabpage = helper.__state().guide_tabpage
+        local list_win = find_win_for_buf(guide_tabpage, helper.__state().guide_list_bufnr)
+        local code_win = nil
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(guide_tabpage)) do
+          if win ~= list_win then
+            code_win = win
+            break
+          end
+        end
+        t.ok(code_win ~= nil)
+        vim.api.nvim_set_current_win(code_win)
+
+        local history = require("code_reviewer_helper.history")
+        history.load(root, helper.__state().config.history)
+        history.add({
+          id = "guide-response-one",
+          status = "success",
+          summary = "Explain this",
+          question = "Explain this",
+          path = "README.md",
+          filetype = "markdown",
+          range = {
+            start_row = 1,
+            start_col = 1,
+            end_row = 1,
+            end_col = 6,
+          },
+          selection_preview = "# Demo",
+          response_markdown = "Stub explanation one",
+          created_at = "2026-04-20T00:00:00Z",
+          completed_at = "2026-04-20T00:00:01Z",
+        })
+        history.add({
+          id = "guide-response-two",
+          status = "success",
+          summary = "Explain this again",
+          question = "Explain this again",
+          path = "README.md",
+          filetype = "markdown",
+          range = {
+            start_row = 1,
+            start_col = 1,
+            end_row = 1,
+            end_col = 6,
+          },
+          selection_preview = "# Demo",
+          response_markdown = "Stub explanation two",
+          created_at = "2026-04-20T00:00:02Z",
+          completed_at = "2026-04-20T00:00:03Z",
+        })
+
+        require("code_reviewer_helper.ui.split").render(history.list()[1], helper.__state().config)
+        t.ok(helper.__state().split_winid ~= nil)
+        local split_width_before = vim.api.nvim_win_get_width(helper.__state().split_winid)
+        local list_width_before = vim.api.nvim_win_get_width(list_win)
+        local code_width_before = vim.api.nvim_win_get_width(code_win)
+
+        vim.api.nvim_win_call(helper.__state().split_winid, function()
+          vim.cmd("quit")
+        end)
+
+        t.ok(vim.wait(1000, function()
+          return helper.__state().current_response_id == "guide-response-two"
+        end))
+
+        guide_tabpage = helper.__state().guide_tabpage
+        list_win = find_win_for_buf(guide_tabpage, helper.__state().guide_list_bufnr)
+        code_win = nil
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(guide_tabpage)) do
+          if win ~= list_win and win ~= helper.__state().split_winid then
+            code_win = win
+            break
+          end
+        end
+
+        t.ok(list_win ~= nil)
+        t.ok(code_win ~= nil)
+        t.ok(helper.__state().split_winid ~= nil)
+        t.ok(math.abs(vim.api.nvim_win_get_width(helper.__state().split_winid) - split_width_before) <= 2)
+        t.ok(math.abs(vim.api.nvim_win_get_width(list_win) - list_width_before) <= 2)
+        t.ok(math.abs(vim.api.nvim_win_get_width(code_win) - code_width_before) <= 2)
       end,
     },
     {

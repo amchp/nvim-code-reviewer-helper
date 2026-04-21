@@ -93,6 +93,15 @@ local function leave_visual_mode()
   end
 end
 
+local function current_workspace_root()
+  local buffer_path = vim.api.nvim_buf_get_name(0)
+  local workspace_root = buffer_path ~= "" and util.git_root(buffer_path) or nil
+  if not workspace_root then
+    workspace_root = util.git_root(vim.uv.cwd()) or vim.uv.cwd()
+  end
+  return workspace_root
+end
+
 local function start_explain(question, opts, selection)
   ensure_setup()
   local config = state.config
@@ -257,16 +266,37 @@ function M.cancel(id)
   return jobs.cancel(id)
 end
 
-function M.sync_btca()
+function M.add_btca_repo(url)
   ensure_setup()
-  local buffer_path = vim.api.nvim_buf_get_name(0)
-  local workspace_root = buffer_path ~= "" and util.git_root(buffer_path) or nil
-  if not workspace_root then
-    workspace_root = util.git_root(vim.uv.cwd()) or vim.uv.cwd()
+  local workspace_root = current_workspace_root()
+
+  local function add_repo(input)
+    local value = require_question(
+      input,
+      "A repository URL is required for the BTCA add repo action."
+    )
+    if not value then
+      return nil
+    end
+
+    local ok, message = btca.add_manual_repository(state.config.btca, workspace_root, value)
+    util.notify(message, ok and vim.log.levels.INFO or vim.log.levels.ERROR)
+    return ok, message
   end
-  local messages = btca.sync(state.config.btca, workspace_root)
-  util.notify(table.concat(messages, "\n"))
-  return messages
+
+  if url ~= nil then
+    return add_repo(url)
+  end
+
+  vim.ui.input({
+    prompt = "BTCA repo URL: ",
+  }, function(input)
+    if input == nil then
+      return
+    end
+    add_repo(input)
+  end)
+  return nil
 end
 
 function M.health()

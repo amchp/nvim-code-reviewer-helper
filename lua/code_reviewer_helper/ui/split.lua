@@ -70,7 +70,7 @@ local function handoff_after_window_close()
       restore_guide_layout()
       return
     end
-    M.render(entry, config)
+    M.render(entry, config, { prefer_anchor = true })
   end)
   return true
 end
@@ -95,13 +95,23 @@ vim.api.nvim_create_autocmd("WinClosed", {
   end,
 })
 
-local function ensure_window(config)
+local function ensure_window(config, opts)
+  opts = opts or {}
   if config.ui.reuse_window and state.split_winid and vim.api.nvim_win_is_valid(state.split_winid) then
     vim.api.nvim_win_set_width(state.split_winid, calc_width(config.ui.width))
     return state.split_winid, state.split_bufnr
   end
 
   local current = vim.api.nvim_get_current_win()
+  local anchor = current
+  if opts.prefer_anchor and state.split_anchor_winid and vim.api.nvim_win_is_valid(state.split_anchor_winid) then
+    local anchor_tab = vim.api.nvim_win_get_tabpage(state.split_anchor_winid)
+    if anchor_tab == vim.api.nvim_get_current_tabpage() then
+      anchor = state.split_anchor_winid
+    end
+  end
+
+  vim.api.nvim_set_current_win(anchor)
   vim.cmd("botright vsplit")
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_width(win, calc_width(config.ui.width))
@@ -117,6 +127,7 @@ local function ensure_window(config)
   state.split_winid = win
   state.split_bufnr = buf
   state.split_tabpage = vim.api.nvim_win_get_tabpage(win)
+  state.split_anchor_winid = anchor
   return win, buf
 end
 
@@ -163,7 +174,7 @@ function M.render(entry, config, opts)
   opts = opts or {}
   local history = require("code_reviewer_helper.history")
   local current = vim.api.nvim_get_current_win()
-  local win, buf = ensure_window(config)
+  local win, buf = ensure_window(config, opts)
   state.split_tabpage = vim.api.nvim_win_get_tabpage(win)
   apply_window_options(win, config)
   apply_buffer_options(buf)
@@ -239,6 +250,7 @@ function M.render(entry, config, opts)
   end
 
   state.current_response_id = entry.id
+  restore_guide_layout(true)
 end
 
 function M.is_open()

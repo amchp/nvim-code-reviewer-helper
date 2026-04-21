@@ -5,6 +5,7 @@ local M = {
   split_bufnr = nil,
   split_winid = nil,
   split_tabpage = nil,
+  split_anchor_winid = nil,
   current_response_id = nil,
   suppress_split_handoff = false,
   guide_history = nil,

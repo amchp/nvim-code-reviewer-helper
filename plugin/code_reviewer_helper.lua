@@ -44,10 +44,11 @@ end, {
   nargs = "?",
 })
 
-vim.api.nvim_create_user_command("CRHBtcaSync", function()
-  helper.sync_btca()
+vim.api.nvim_create_user_command("CRHBtcaAddRepo", function(opts)
+  helper.add_btca_repo(opts.args ~= "" and opts.args or nil)
 end, {
-  desc = "Sync BTCA dependency repositories for the current workspace",
+  desc = "Add a BTCA repository for the current workspace from a git URL",
+  nargs = "?",
 })
 
 vim.api.nvim_create_user_command("CRHHealth", function()

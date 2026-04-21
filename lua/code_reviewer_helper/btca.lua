@@ -25,6 +25,7 @@ local source_priorities = {
   ["go.mod require"] = 425,
   ["pyproject.toml git"] = 300,
   ["requirements.txt git"] = 250,
+  ["btca.added"] = 1000,
   ["btca.repositories"] = 1000,
 }
 
@@ -160,6 +161,42 @@ local function repository_path(config, url)
   end
 
   return preferred
+end
+
+local function manual_repository_dir()
+  return vim.fn.stdpath("state") .. "/code-reviewer-helper/btca"
+end
+
+local function manual_repository_path(workspace_root)
+  return manual_repository_dir() .. "/" .. util.workspace_id(workspace_root) .. ".json"
+end
+
+local function load_manual_repositories(workspace_root)
+  if not workspace_root or workspace_root == "" then
+    return {}
+  end
+
+  local data = util.json_decode(util.read_file(manual_repository_path(workspace_root)), {
+    repositories = {},
+  })
+  if type(data.repositories) ~= "table" then
+    return {}
+  end
+
+  local repositories = {}
+  for _, url in ipairs(data.repositories) do
+    if type(url) == "string" then
+      table.insert(repositories, url)
+    end
+  end
+  return repositories
+end
+
+local function save_manual_repositories(workspace_root, repositories)
+  util.ensure_dir(manual_repository_dir())
+  util.write_file(manual_repository_path(workspace_root), util.json_encode({
+    repositories = repositories,
+  }))
 end
 
 local function add_repository(map, url, source, priority)
@@ -423,6 +460,54 @@ function M.list_repositories(config)
   return repos
 end
 
+function M.normalize_repository_url(value)
+  return normalize_repository_url(value)
+end
+
+function M.manual_repositories(workspace_root)
+  return load_manual_repositories(workspace_root)
+end
+
+function M.add_manual_repository(config, workspace_root, value)
+  if not workspace_root or workspace_root == "" then
+    return false, "Could not determine the current workspace root"
+  end
+
+  local normalized = normalize_repository_url(value)
+  if not normalized then
+    return false, "Repository URL must be a valid GitHub, GitLab, Bitbucket, or file git URL"
+  end
+
+  local repositories = load_manual_repositories(workspace_root)
+  local already_added = false
+  for _, existing in ipairs(repositories) do
+    if normalize_repository_url(existing) == normalized then
+      already_added = true
+      break
+    end
+  end
+
+  if not already_added then
+    table.insert(repositories, normalized)
+    table.sort(repositories)
+    save_manual_repositories(workspace_root, repositories)
+  end
+
+  util.ensure_dir(config.sandbox_dir)
+  local repo = {
+    url = normalized,
+    name = repository_label(normalized),
+    path = repository_path(config, normalized),
+  }
+  local sync_message = sync_one(repo)
+
+  if already_added then
+    return true, string.format("already added %s\n%s", repo.name, sync_message)
+  end
+
+  return true, string.format("added %s\n%s", repo.name, sync_message)
+end
+
 function M.resolve_repositories(config, workspace_root)
   local repositories = discover_workspace_repositories(workspace_root)
 
@@ -432,6 +517,15 @@ function M.resolve_repositories(config, workspace_root)
       url,
       "btca.repositories",
       source_priorities["btca.repositories"]
+    )
+  end
+
+  for _, url in ipairs(load_manual_repositories(workspace_root)) do
+    add_repository(
+      repositories,
+      url,
+      "btca.added",
+      source_priorities["btca.added"]
     )
   end
 

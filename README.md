@@ -26,11 +26,15 @@ git --version
 
 Neovim `0.11+` is recommended.
 
-## Install With `lazy.nvim`
+## Install From GitHub With `lazy.nvim`
+
+If you publish this repo on GitHub, users should install it with `lazy.nvim`.
+`lazygit` is only a Git UI, so people can clone the repo with it, but Neovim
+plugin installation still happens through `lazy.nvim` or native `packpath`.
 
 ```lua
 {
-  dir = "/home/automac/Documents/Projects/code-reviewer-helper",
+  "your-github-username/code-reviewer-helper",
   name = "code-reviewer-helper",
   dependencies = {},
   config = function()
@@ -51,11 +55,15 @@ Neovim `0.11+` is recommended.
 }
 ```
 
+Replace `your-github-username` with the actual GitHub owner or organization.
+
 ## Install With Native Packpath
+
+After publishing the repo, users can also install it without a plugin manager:
 
 ```bash
 mkdir -p ~/.local/share/nvim/site/pack/local/start
-ln -s /home/automac/Documents/Projects/code-reviewer-helper \
+git clone https://github.com/your-github-username/code-reviewer-helper.git \
   ~/.local/share/nvim/site/pack/local/start/code-reviewer-helper
 ```
 
@@ -75,6 +83,14 @@ end, { desc = "Explain selected code" })
 vim.keymap.set("n", "<leader>e", "<cmd>CRHExplain<cr>", {
   desc = "Ask repo question about current file",
 })
+```
+
+## Install From A Local Checkout
+
+```bash
+mkdir -p ~/.local/share/nvim/site/pack/local/start
+ln -s /home/automac/Documents/Projects/code-reviewer-helper \
+  ~/.local/share/nvim/site/pack/local/start/code-reviewer-helper
 ```
 
 ## Minimal Config
@@ -138,7 +154,7 @@ When `:CRHExplain` runs in normal mode, it asks for a repo-level question about 
 - `:CRHNext`
 - `:CRHPrev`
 - `:CRHCancel`
-- `:CRHBtcaSync`
+- `:CRHBtcaAddRepo [url]`
 - `:CRHHealth`
 - `:CRHGuide`
 - `:CRHGuideHistory`
@@ -185,6 +201,7 @@ Current discovery is intentionally conservative:
 - `Cargo.toml` dependencies with explicit `git = "..."`
 - `pyproject.toml` and `requirements.txt` git-based dependencies
 - optional manual extras from `btca.repositories`
+- workspace-specific repos added with `:CRHBtcaAddRepo`
 
 The plugin does not sync every discovered repo by default. It ranks candidates and keeps the most important few, preferring manual entries and runtime dependencies over lower-signal sources like dev-only dependencies.
 
@@ -208,7 +225,13 @@ require("code_reviewer_helper").setup({
 })
 ```
 
-Otherwise run `:CRHBtcaSync` from inside the repository you are reviewing.
+To add a repo directly by URL for the current workspace, run:
+
+```vim
+:CRHBtcaAddRepo https://github.com/owner/repo
+```
+
+If you omit the argument, the command prompts for the URL. Added repos are stored under Neovim state per workspace and are included in future BTCA resolution for that workspace. For automatic refresh of discovered repos, enable `btca.auto_sync`.
 
 ## What `:CRHHealth` Checks
 

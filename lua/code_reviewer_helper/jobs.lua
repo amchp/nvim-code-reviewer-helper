@@ -77,7 +77,10 @@ function M.submit(payload, config)
       state.active_jobs[id] = nil
       history.add(entry)
       if not split.is_open() and split.should_auto_open() then
-        split.render(entry, config, { focus = false })
+        split.render(entry, config, {
+          focus = false,
+          prefer_anchor = true,
+        })
       end
 
       if status == "success" then

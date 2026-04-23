@@ -48,6 +48,15 @@ local function classify_file(path)
   return "other"
 end
 
+local function basename(path)
+  return path:match("([^/]+)$") or path
+end
+
+local function is_review_noise(path)
+  local name = basename(path)
+  return name == ".DS_Store"
+end
+
 local function build_inventory(root)
   local files = util.list_files(root)
   local items = {}
@@ -167,9 +176,11 @@ local function collect_changes(root, config)
   for _, line in ipairs(lines) do
     if line ~= "" then
       local item = parse_status_line(line)
-      item.diff_excerpt = diff_excerpt(root, item, config.max_diff_bytes_per_file)
-      item.stats = diff_stats(root, item)
-      table.insert(items, item)
+      if not is_review_noise(item.path) then
+        item.diff_excerpt = diff_excerpt(root, item, config.max_diff_bytes_per_file)
+        item.stats = diff_stats(root, item)
+        table.insert(items, item)
+      end
     end
   end
 

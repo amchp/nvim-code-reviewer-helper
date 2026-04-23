@@ -1368,6 +1368,29 @@ function M.tests()
       end,
     },
     {
+      name = "guide ignores Finder metadata-only changes and falls back to repo mode",
+      run = function()
+        local fake_bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh"
+        local helper, root = helper_with_guide_config(fake_bin, {
+          guide = {
+            use_diffview_if_available = false,
+          },
+        })
+        seed_repo_workspace(root)
+        commit_all(root, "seed")
+        t.write(root .. "/.DS_Store", "finder metadata\n")
+
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        helper.guide()
+        t.ok(wait_for_guide_session(helper))
+
+        local session = helper.__state().guide_session
+        t.eq("repo", session.mode)
+        t.eq(3, #session.items)
+      end,
+    },
+    {
       name = "guide falls back to repo mode when no git root is available",
       run = function()
         local fake_bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh"

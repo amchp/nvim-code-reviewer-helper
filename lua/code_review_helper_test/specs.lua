@@ -190,6 +190,53 @@ EOF
   return script, counter
 end
 
+local function make_utf8_validating_fake_bin()
+  local dir = t.tmp_dir("guide_utf8_fake")
+  local script = dir .. "/codex_guide_utf8.sh"
+  t.write(script, [=[
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=""
+stdin_file="$(mktemp)"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+cat >"$stdin_file"
+
+python3 - "$stdin_file" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+path.read_bytes().decode("utf-8")
+PY
+
+cat >"$output" <<'EOF'
+```json
+{"mode":"repo","summary":"Start at the docs first.","items":[{"path":"README.md","reason":"Start with the top-level docs.","status":"repo","old_path":null}]}
+```
+# Review Order
+
+Start at the docs first.
+
+1. `README.md` - Start with the top-level docs.
+EOF
+]=])
+  vim.system({ "chmod", "+x", script }, { text = true }):wait()
+  return script
+end
+
 function M.tests()
   return {
     {
@@ -268,6 +315,15 @@ function M.tests()
         if table.concat(names, "\n"):match("github.com/acme/dev%-only") then
           error("low-signal dev dependency should be excluded when max_repositories is reached")
         end
+      end,
+    },
+    {
+      name = "ensure_utf8 replaces invalid byte sequences",
+      run = function()
+        local util = require("code_reviewer_helper.util")
+
+        t.eq("a?b", util.ensure_utf8("a" .. string.char(255) .. "b"))
+        t.eq("???", util.ensure_utf8(string.char(237, 160, 128)))
       end,
     },
     {
@@ -1788,6 +1844,25 @@ function M.tests()
             },
           }
         )
+        t.write(root .. "/README.md", "# Demo\n" .. string.char(255) .. "\n")
+        t.write(root .. "/plugin/code_reviewer_helper.lua", "return {}\n")
+        t.write(root .. "/lua/code_reviewer_helper/init.lua", "return {}\n")
+        commit_all(root, "seed")
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        helper.guide()
+        t.ok(wait_for_guide_session(helper))
+        t.eq("repo", helper.__state().guide_session.mode)
+      end,
+    },
+    {
+      name = "guide request succeeds when codex rejects non-UTF-8 stdin",
+      run = function()
+        local helper, root = helper_with_guide_config(make_utf8_validating_fake_bin(), {
+          guide = {
+            use_diffview_if_available = false,
+          },
+        })
         t.write(root .. "/README.md", "# Demo\n" .. string.char(255) .. "\n")
         t.write(root .. "/plugin/code_reviewer_helper.lua", "return {}\n")
         t.write(root .. "/lua/code_reviewer_helper/init.lua", "return {}\n")

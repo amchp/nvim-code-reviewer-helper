@@ -48,9 +48,6 @@ function M.ensure_utf8(value, replacement)
   if value == "" then
     return value
   end
-  if pcall(vim.str_utfindex, value) then
-    return value
-  end
 
   replacement = replacement or "?"
 

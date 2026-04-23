@@ -64,6 +64,8 @@ function M.build(context, config)
     "Each item must include path, reason, status, and old_path.",
     "Statuses must be one of modified, added, deleted, renamed, untracked, repo.",
     "Keep reasons short and concrete.",
+    "Every item path must exactly match a path already listed in 'Repository Inventory' or 'Changed File Excerpts'.",
+    "Do not invent, infer, or normalize paths. If a path is not listed, do not return it.",
     string.format("In repo mode, return at most %d items.", config.guide.repo_mode_max_files),
     "",
   }
@@ -98,6 +100,26 @@ function M.build(context, config)
     "- Include the overall summary.",
     "- Include the ordered file list with one short reason per file.",
   })
+
+  return table.concat(lines, "\n")
+end
+
+function M.build_repair(context, config, response, err)
+  local lines = {
+    M.build(context, config),
+    "## Previous Attempt Failed",
+    "",
+    "- Parser error: " .. err,
+    "- Fix the previous response so it matches the required format and only uses valid repository paths.",
+    "- Return exactly the same two sections as before and nothing else.",
+    "",
+    "## Previous Response",
+    "",
+    "<previous_response>",
+    response or "",
+    "</previous_response>",
+    "",
+  }
 
   return table.concat(lines, "\n")
 end

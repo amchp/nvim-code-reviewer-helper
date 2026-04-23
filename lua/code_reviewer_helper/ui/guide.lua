@@ -257,6 +257,25 @@ local function new_scratch_buffer(name, filetype, lines)
   return buf
 end
 
+local function open_file_buffer(winid, path)
+  if not util.file_exists(path) then
+    return nil
+  end
+
+  local bufnr = vim.fn.bufnr(path)
+  if bufnr == -1 then
+    bufnr = vim.fn.bufadd(path)
+  end
+  vim.fn.bufload(bufnr)
+
+  vim.api.nvim_win_call(winid, function()
+    vim.cmd("silent! diffoff!")
+    vim.cmd("hide buffer " .. bufnr)
+  end)
+  set_local_maps(bufnr)
+  return bufnr
+end
+
 local function filetype_for_path(path)
   return vim.filetype.match({ filename = path }) or ""
 end
@@ -300,6 +319,7 @@ local function render_change_item(session, item)
 
   local filetype = filetype_for_path(item.path)
   local left_lines = git_show_lines(session.workspace_root, item.old_path or item.path)
+  local right_path = session.workspace_root .. "/" .. item.path
   local right_lines = working_lines(session.workspace_root, item.path)
 
   if item.status == "untracked" or item.status == "added" then
@@ -324,11 +344,17 @@ local function render_change_item(session, item)
     return
   end
 
-  local right_buf = new_scratch_buffer(
-    "crh://guide-right/" .. session.id .. "/" .. item.path,
-    filetype,
-    right_lines
-  )
+  local right_buf
+  if item.status ~= "deleted" then
+    right_buf = open_file_buffer(native.secondary_winid, right_path)
+  end
+  if not right_buf then
+    right_buf = new_scratch_buffer(
+      "crh://guide-right/" .. session.id .. "/" .. item.path,
+      filetype,
+      right_lines
+    )
+  end
   vim.api.nvim_win_set_buf(native.secondary_winid, right_buf)
 
   vim.api.nvim_win_call(native.primary_winid, function()
@@ -518,10 +544,7 @@ local function open_with_diffview(session)
       end
       return git_show_lines(session.workspace_root, selected.old_path or selected.path)
     end
-    if selected.status == "deleted" then
-      return nil
-    end
-    return working_lines(session.workspace_root, selected.path)
+    return nil
   end
 
   local view = CDiffView({

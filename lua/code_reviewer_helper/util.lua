@@ -37,6 +37,114 @@ function M.read_file(path, max_bytes)
   return data
 end
 
+local function is_continuation_byte(byte)
+  return byte and byte >= 0x80 and byte <= 0xBF
+end
+
+function M.ensure_utf8(value, replacement)
+  if type(value) ~= "string" then
+    return value
+  end
+  if value == "" then
+    return value
+  end
+  if pcall(vim.str_utfindex, value) then
+    return value
+  end
+
+  replacement = replacement or "?"
+
+  local out = {}
+  local index = 1
+  local length = #value
+
+  while index <= length do
+    local byte1 = value:byte(index)
+
+    if byte1 < 0x80 then
+      out[#out + 1] = string.char(byte1)
+      index = index + 1
+    elseif byte1 >= 0xC2 and byte1 <= 0xDF then
+      local byte2 = value:byte(index + 1)
+      if is_continuation_byte(byte2) then
+        out[#out + 1] = value:sub(index, index + 1)
+        index = index + 2
+      else
+        out[#out + 1] = replacement
+        index = index + 1
+      end
+    elseif byte1 == 0xE0 then
+      local byte2 = value:byte(index + 1)
+      local byte3 = value:byte(index + 2)
+      if byte2 and byte2 >= 0xA0 and byte2 <= 0xBF and is_continuation_byte(byte3) then
+        out[#out + 1] = value:sub(index, index + 2)
+        index = index + 3
+      else
+        out[#out + 1] = replacement
+        index = index + 1
+      end
+    elseif (byte1 >= 0xE1 and byte1 <= 0xEC) or (byte1 >= 0xEE and byte1 <= 0xEF) then
+      local byte2 = value:byte(index + 1)
+      local byte3 = value:byte(index + 2)
+      if is_continuation_byte(byte2) and is_continuation_byte(byte3) then
+        out[#out + 1] = value:sub(index, index + 2)
+        index = index + 3
+      else
+        out[#out + 1] = replacement
+        index = index + 1
+      end
+    elseif byte1 == 0xED then
+      local byte2 = value:byte(index + 1)
+      local byte3 = value:byte(index + 2)
+      if byte2 and byte2 >= 0x80 and byte2 <= 0x9F and is_continuation_byte(byte3) then
+        out[#out + 1] = value:sub(index, index + 2)
+        index = index + 3
+      else
+        out[#out + 1] = replacement
+        index = index + 1
+      end
+    elseif byte1 == 0xF0 then
+      local byte2 = value:byte(index + 1)
+      local byte3 = value:byte(index + 2)
+      local byte4 = value:byte(index + 3)
+      if byte2 and byte2 >= 0x90 and byte2 <= 0xBF and is_continuation_byte(byte3) and is_continuation_byte(byte4) then
+        out[#out + 1] = value:sub(index, index + 3)
+        index = index + 4
+      else
+        out[#out + 1] = replacement
+        index = index + 1
+      end
+    elseif byte1 >= 0xF1 and byte1 <= 0xF3 then
+      local byte2 = value:byte(index + 1)
+      local byte3 = value:byte(index + 2)
+      local byte4 = value:byte(index + 3)
+      if is_continuation_byte(byte2) and is_continuation_byte(byte3) and is_continuation_byte(byte4) then
+        out[#out + 1] = value:sub(index, index + 3)
+        index = index + 4
+      else
+        out[#out + 1] = replacement
+        index = index + 1
+      end
+    elseif byte1 == 0xF4 then
+      local byte2 = value:byte(index + 1)
+      local byte3 = value:byte(index + 2)
+      local byte4 = value:byte(index + 3)
+      if byte2 and byte2 >= 0x80 and byte2 <= 0x8F and is_continuation_byte(byte3) and is_continuation_byte(byte4) then
+        out[#out + 1] = value:sub(index, index + 3)
+        index = index + 4
+      else
+        out[#out + 1] = replacement
+        index = index + 1
+      end
+    else
+      out[#out + 1] = replacement
+      index = index + 1
+    end
+  end
+
+  return table.concat(out)
+end
+
 function M.read_lines(path, max_bytes)
   local data = M.read_file(path, max_bytes)
   if not data then

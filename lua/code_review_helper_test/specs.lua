@@ -131,6 +131,65 @@ local function find_win_for_buf(tabpage, bufnr)
   return nil
 end
 
+local function make_retry_fake_bin()
+  local dir = t.tmp_dir("guide_retry_fake")
+  local script = dir .. "/codex_guide_retry.sh"
+  local counter = dir .. "/counter"
+  t.write(script, string.format([=[
+#!/usr/bin/env bash
+set -euo pipefail
+
+output=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output-last-message)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+count=0
+if [[ -f %q ]]; then
+  count="$(cat %q)"
+fi
+count=$((count + 1))
+printf '%%s' "$count" > %q
+
+cat >/dev/null
+
+if [[ "$count" == "1" ]]; then
+  cat >"$output" <<'EOF'
+```json
+{"mode":"repo","summary":"wrong repo","items":[{"path":".github/workflows/test-pr.yml","reason":"hallucinated path","status":"repo","old_path":null}]}
+```
+# Review Order
+
+1. .github/workflows/test-pr.yml
+EOF
+  exit 0
+fi
+
+cat >"$output" <<'EOF'
+```json
+{"mode":"repo","summary":"Review the repo entrypoints first.","items":[{"path":"README.md","reason":"Start with the top-level documentation.","status":"repo","old_path":null},{"path":"plugin/code_reviewer_helper.lua","reason":"Then inspect the Neovim plugin entrypoint.","status":"repo","old_path":null}]}
+```
+# Review Order
+
+Overall summary: review README.md first, then the plugin entrypoint.
+
+1. README.md - Start with the top-level documentation.
+2. plugin/code_reviewer_helper.lua - Then inspect the Neovim plugin entrypoint.
+EOF
+]=], counter, counter, counter))
+  vim.system({ "chmod", "+x", script }, { text = true }):wait()
+  return script, counter
+end
+
 function M.tests()
   return {
     {
@@ -139,6 +198,7 @@ function M.tests()
         local config = require("code_reviewer_helper.config").normalize({})
         t.eq("codex", config.codex.bin)
         t.eq("gpt-5.4-mini", config.codex.model)
+        t.eq(true, config.codex.ephemeral)
         t.eq(true, config.btca.enabled)
         t.eq(0, #config.btca.repositories)
         t.eq(5, config.btca.max_repositories)
@@ -382,6 +442,7 @@ function M.tests()
           codex = {
             bin = "codex",
             sandbox = "workspace-write",
+            ephemeral = true,
             use_web_search = true,
             extra_args = { "--json" },
             model = "gpt-5.4",
@@ -394,6 +455,7 @@ function M.tests()
         t.eq("codex", command[1])
         t.eq("--search", command[2])
         t.eq("exec", command[3])
+        t.ok(vim.tbl_contains(command, "--ephemeral"))
         t.ok(vim.tbl_contains(command, "/tmp/btca"))
         t.ok(vim.tbl_contains(command, "gpt-5.4"))
       end,
@@ -432,6 +494,29 @@ function M.tests()
 
         t.eq(true, require("code_reviewer_helper.util").file_exists(skill_path))
         local content = require("code_reviewer_helper.util").read_file(skill_path) or ""
+        t.match("^%-%-%-", content)
+        t.match("name: btca%-local", content)
+        t.match("BTCA Local instructions", content)
+      end,
+    },
+    {
+      name = "setup repairs legacy BTCA skill files without frontmatter",
+      run = function()
+        local helper = t.load_helper()
+        local skill_path = t.tmp_dir("btca_legacy") .. "/SKILL.md"
+        t.write(skill_path, "BTCA Local instructions:\n- legacy\n")
+
+        helper.setup({
+          btca = {
+            sandbox_dir = t.tmp_dir("btca_legacy_sandbox"),
+            skill_path = skill_path,
+          },
+          history = { persist = false },
+        })
+
+        local content = require("code_reviewer_helper.util").read_file(skill_path) or ""
+        t.match("^%-%-%-", content)
+        t.match("name: btca%-local", content)
         t.match("BTCA Local instructions", content)
       end,
     },
@@ -1138,6 +1223,7 @@ function M.tests()
         t.match("Return exactly two sections", prompt)
         t.match("Repository Inventory", prompt)
         t.match("Changed File Excerpts", prompt)
+        t.match("Every item path must exactly match", prompt)
         t.match("modified.lua", prompt)
       end,
     },
@@ -1516,6 +1602,9 @@ function M.tests()
         local modified_left = find_buffer_by_name("crh://guide%-left/")
         local modified_text = table.concat(vim.api.nvim_buf_get_lines(modified_left, 0, -1, false), "\n")
         t.match("local value = 1", modified_text)
+        local modified_right = vim.fn.bufnr(root .. "/modified.lua")
+        t.ok(modified_right ~= -1)
+        t.eq(true, vim.bo[modified_right].modifiable)
 
         local guide_tabpage = helper.__state().guide_tabpage
         local list_win = find_win_for_buf(guide_tabpage, helper.__state().guide_list_bufnr)
@@ -1605,6 +1694,7 @@ function M.tests()
         t.ok(opened)
         t.eq("b.lua", added.opts.files.working[1].path)
         t.eq("a.lua", added.opts.files.working[2].path)
+        t.eq(nil, added.opts.get_file_data("working", "b.lua", "right"))
 
         package.loaded["diffview.rev"] = nil
         package.loaded["diffview.api.views.diff.diff_view"] = nil
@@ -1685,6 +1775,28 @@ function M.tests()
         t.ok(plan_buf ~= nil)
         local text = table.concat(vim.api.nvim_buf_get_lines(plan_buf, 0, -1, false), "\n")
         t.match("# Review Order", text)
+      end,
+    },
+    {
+      name = "guide request sanitizes invalid UTF-8 in prompt sources",
+      run = function()
+        local helper, root = helper_with_guide_config(
+          "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh",
+          {
+            guide = {
+              use_diffview_if_available = false,
+            },
+          }
+        )
+        t.write(root .. "/README.md", "# Demo\n" .. string.char(255) .. "\n")
+        t.write(root .. "/plugin/code_reviewer_helper.lua", "return {}\n")
+        t.write(root .. "/lua/code_reviewer_helper/init.lua", "return {}\n")
+        commit_all(root, "seed")
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        helper.guide()
+        t.ok(wait_for_guide_session(helper))
+        t.eq("repo", helper.__state().guide_session.mode)
       end,
     },
     {
@@ -1861,6 +1973,29 @@ function M.tests()
         t.eq(nil, helper.__state().guide_session)
         local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
         t.match("Guide Parse Failure", text)
+      end,
+    },
+    {
+      name = "guide retries once when parser rejects foreign repo paths",
+      run = function()
+        local fake_bin, counter = make_retry_fake_bin()
+        local helper, root = helper_with_guide_config(fake_bin, {
+          guide = {
+            use_diffview_if_available = false,
+          },
+        })
+        seed_repo_workspace(root)
+        commit_all(root, "seed")
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        helper.guide()
+        t.ok(wait_for_guide_session(helper))
+
+        local session = helper.__state().guide_session
+        t.eq("repo", session.mode)
+        t.eq(2, #session.items)
+        t.eq("README.md", session.items[1].path)
+        t.eq("2", t.read(counter))
       end,
     },
   }

@@ -16,6 +16,9 @@ function M.build_command(request, config, output_path)
   end
 
   table.insert(command, "exec")
+  if config.codex.ephemeral then
+    table.insert(command, "--ephemeral")
+  end
   table.insert(command, "-C")
   table.insert(command, request.workspace_root)
   table.insert(command, "--output-last-message")
@@ -44,10 +47,11 @@ end
 function M.submit(request, config, callbacks)
   local output_path = vim.fn.tempname() .. "_crh_response.md"
   local command = M.build_command(request, config, output_path)
+  local prompt = util.ensure_utf8(request.prompt or "")
 
   local proc = vim.system(command, {
     text = true,
-    stdin = request.prompt,
+    stdin = prompt,
   }, function(result)
     vim.schedule(function()
       callbacks.on_complete({

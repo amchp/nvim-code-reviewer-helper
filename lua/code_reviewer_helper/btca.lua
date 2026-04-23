@@ -3,6 +3,11 @@ local util = require("code_reviewer_helper.util")
 local M = {}
 
 local fallback_prompt = [[
+---
+name: btca-local
+description: Local repository search helper for BTCA workflows
+---
+
 BTCA Local instructions:
 - Search local git repositories cloned under the BTCA sandbox directory when useful.
 - Prefer the small set of repositories resolved as most important from the active workspace's dependency manifests.
@@ -10,6 +15,14 @@ BTCA Local instructions:
 - Include citations to repository files and any web docs used.
 - Keep explanations concrete and oriented around the selected code.
 ]]
+
+local function has_yaml_frontmatter(data)
+  if type(data) ~= "string" or data == "" then
+    return false
+  end
+  data = data:gsub("^\239\187\191", "")
+  return data:match("^%-%-%-[\r\n]") ~= nil
+end
 
 local package_dependency_priorities = {
   dependencies = 500,
@@ -401,7 +414,7 @@ end
 
 function M.skill_content(config)
   local data = util.read_file(config.skill_path)
-  if data and data ~= "" then
+  if data and data ~= "" and has_yaml_frontmatter(data) then
     return data
   end
   if config.fallback_prompt then
@@ -412,7 +425,7 @@ end
 
 function M.ensure_skill(config)
   local data = util.read_file(config.skill_path)
-  if data and data ~= "" then
+  if data and data ~= "" and has_yaml_frontmatter(data) then
     return true
   end
   if not config.fallback_prompt then

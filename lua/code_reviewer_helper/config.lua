@@ -5,6 +5,7 @@ local defaults = {
     bin = "codex",
     model = "gpt-5.4-mini",
     sandbox = "workspace-write",
+    ephemeral = true,
     use_web_search = true,
     extra_args = {},
   },
@@ -82,6 +83,9 @@ function M.normalize(user_opts)
   end
   if type(opts.codex.sandbox) ~= "string" or opts.codex.sandbox == "" then
     error("codex.sandbox must be a non-empty string")
+  end
+  if type(opts.codex.ephemeral) ~= "boolean" then
+    error("codex.ephemeral must be a boolean")
   end
   if type(opts.codex.extra_args) ~= "table" then
     error("codex.extra_args must be a table")

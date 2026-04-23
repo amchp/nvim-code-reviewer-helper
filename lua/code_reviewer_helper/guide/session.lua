@@ -110,6 +110,43 @@ local function finalize_session(parsed, context)
   return session
 end
 
+local function handle_completion(request_id, context, attempt, result)
+  state.active_guide_jobs[request_id] = nil
+  local response = util.read_file(result.output_path) or ""
+  util.remove_file(result.output_path)
+
+  if result.code ~= 0 then
+    ui.show_parse_failure(response ~= "" and response or result.stderr, "codex guide request failed")
+    util.notify("Guided review request failed", vim.log.levels.ERROR)
+    return
+  end
+
+  local parsed, err = parser.parse(response, context)
+  if parsed then
+    finalize_session(parsed, context)
+    return
+  end
+
+  if attempt < 2 then
+    local repair_id = next_id()
+    local repair_prompt = prompt_mod.build_repair(context, state.config, response, err)
+    util.notify("Guided review response invalid, retrying once", vim.log.levels.WARN)
+    state.active_guide_jobs[repair_id] = provider.submit({
+      id = repair_id,
+      prompt = repair_prompt,
+      workspace_root = context.workspace_root,
+    }, state.config, {
+      on_complete = function(repair_result)
+        handle_completion(repair_id, context, attempt + 1, repair_result)
+      end,
+    })
+    return
+  end
+
+  ui.show_parse_failure(response, err)
+  util.notify("Guided review parse failed: " .. err, vim.log.levels.ERROR)
+end
+
 function M.start()
   local seed = resolve_workspace_seed()
   local context = context_mod.build(seed, state.config)
@@ -122,24 +159,7 @@ function M.start()
     workspace_root = context.workspace_root,
   }, state.config, {
     on_complete = function(result)
-      state.active_guide_jobs[request_id] = nil
-      local response = util.read_file(result.output_path) or ""
-      util.remove_file(result.output_path)
-
-      if result.code ~= 0 then
-        ui.show_parse_failure(response ~= "" and response or result.stderr, "codex guide request failed")
-        util.notify("Guided review request failed", vim.log.levels.ERROR)
-        return
-      end
-
-      local parsed, err = parser.parse(response, context)
-      if not parsed then
-        ui.show_parse_failure(response, err)
-        util.notify("Guided review parse failed: " .. err, vim.log.levels.ERROR)
-        return
-      end
-
-      finalize_session(parsed, context)
+      handle_completion(request_id, context, 1, result)
     end,
   })
 

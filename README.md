@@ -6,7 +6,7 @@ Neovim plugin for asking Codex to explain selected code, answer questions about 
 
 - Explains a visual selection with surrounding code, diagnostics, symbol context, and nearby docs such as `README.md` or `AGENTS.md`.
 - Supports file-level questions from normal mode when you want repository context for the current buffer.
-- Runs `codex exec` locally and writes the final answer into a reusable markdown split inside Neovim.
+- Runs `codex exec --ephemeral` locally and writes the final answer into a reusable markdown split inside Neovim.
 - Saves explain responses and guided review sessions so they can be reopened later.
 - Builds guided review plans with `:CRHGuide` for either current git changes or a first-pass repo walkthrough.
 - Integrates BTCA-style dependency repository context through a local sandbox, with optional auto-sync.
@@ -105,6 +105,7 @@ require("code_reviewer_helper").setup({
     bin = "codex",
     model = "gpt-5.4-mini",
     sandbox = "workspace-write",
+    ephemeral = true,
     use_web_search = true,
   },
   btca = {
@@ -122,7 +123,7 @@ require("code_reviewer_helper").setup({
 - If the git worktree has tracked or untracked changes, it generates a review plan for those changes.
 - If the worktree is clean, it generates a first-pass walkthrough for the repository.
 
-Guide sessions are persisted under Neovim state, and the plugin can reopen the last session at the saved file position. If `diffview.nvim` is installed, changed-file guide sessions use Diffview; otherwise the plugin falls back to its native tab UI.
+Guide sessions are persisted under Neovim state, and the plugin can reopen the last session at the saved file position. In changed-file reviews, the working-tree side stays attached to the real file buffer so you can edit while reviewing. If `diffview.nvim` is installed, changed-file guide sessions use Diffview; otherwise the plugin falls back to its native tab UI.
 
 ## BTCA Repository Context
 

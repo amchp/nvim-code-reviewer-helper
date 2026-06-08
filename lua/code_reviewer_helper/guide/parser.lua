@@ -9,6 +9,7 @@ local valid_status = {
   renamed = true,
   untracked = true,
   repo = true,
+  overview = true,
 }
 
 local function skip_string(text, index)
@@ -76,7 +77,11 @@ local function parse_json_block(response)
 end
 
 local function parse_markdown(response)
-  local markdown = response:match("```json%s*.-%s*```%s*(# Review Order[\r\n].*)")
+  local markdown = response:match("```json%s*.-%s*```%s*(# Review Overview[\r\n].*)")
+  if markdown then
+    return markdown
+  end
+  markdown = response:match("(# Review Overview[\r\n].*)")
   if markdown then
     return markdown
   end
@@ -93,11 +98,22 @@ function M.parse(response, context)
   if type(payload) ~= "table" then
     return nil, "invalid json payload"
   end
-  if payload.mode ~= "changes" and payload.mode ~= "repo" then
+  if payload.mode == "repo" then
+    payload.mode = "codebase"
+  elseif payload.mode == "changes" then
+    payload.mode = "git_changes"
+  end
+  if payload.mode ~= "codebase" and payload.mode ~= "git_changes" then
     return nil, "invalid mode"
+  end
+  if context.mode and payload.mode ~= context.mode then
+    return nil, "mode does not match requested review mode"
   end
   if type(payload.summary) ~= "string" or payload.summary == "" then
     return nil, "missing summary"
+  end
+  if type(payload.overview_markdown) ~= "string" or payload.overview_markdown == "" then
+    return nil, "missing overview_markdown"
   end
   if type(payload.items) ~= "table" or #payload.items == 0 then
     return nil, "missing items"
@@ -124,7 +140,7 @@ function M.parse(response, context)
     if item.old_path ~= nil and type(item.old_path) ~= "string" then
       return nil, "item old_path must be nil or string"
     end
-    if item.status ~= "deleted" and not context.valid_paths[item.path] then
+    if item.status ~= "deleted" and item.status ~= "overview" and not context.valid_paths[item.path] then
       return nil, "item path does not exist in repo inventory: " .. item.path
     end
     if not seen[item.path] then
@@ -139,13 +155,12 @@ function M.parse(response, context)
   end
 
   local plan_markdown = parse_markdown(response or "")
-  if not plan_markdown then
-    return nil, "missing markdown plan"
-  end
+  plan_markdown = plan_markdown or payload.overview_markdown
 
   return {
     mode = payload.mode,
     summary = payload.summary,
+    overview_markdown = payload.overview_markdown,
     items = deduped,
     plan_markdown = plan_markdown,
   }

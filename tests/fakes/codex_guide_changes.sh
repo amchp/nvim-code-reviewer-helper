@@ -19,8 +19,9 @@ cat >/dev/null
 cat >"$output" <<'EOF'
 ```json
 {
-  "mode": "changes",
+  "mode": "git_changes",
   "summary": "Review the tracked edit first, then the new file, then the deleted file, then the rename.",
+  "overview_markdown": "# Review Overview\n\nThis aggregate diff updates, adds, deletes, and renames files.",
   "items": [
     {
       "path": "modified.lua",
@@ -49,7 +50,7 @@ cat >"$output" <<'EOF'
   ]
 }
 ```
-# Review Order
+# Review Overview
 
 Review the tracked edit first, then the added file, then the deleted file, then the rename.
 EOF

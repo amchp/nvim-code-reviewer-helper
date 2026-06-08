@@ -5,7 +5,7 @@ local M = {}
 function M.pick(callback)
   local entries = history.list()
   if #entries == 0 then
-    vim.notify("No saved guide sessions yet", vim.log.levels.INFO, {
+    vim.notify("No saved Review Sessions yet", vim.log.levels.INFO, {
       title = "code-reviewer-helper",
     })
     return
@@ -31,7 +31,7 @@ function M.pick(callback)
   end
 
   vim.ui.select(items, {
-    prompt = "Saved guide sessions",
+    prompt = "Saved Review Sessions",
     format_item = function(item)
       return item.label
     end,

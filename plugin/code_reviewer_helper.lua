@@ -12,6 +12,12 @@ end, {
   range = true,
 })
 
+vim.api.nvim_create_user_command("CRHAskFile", function()
+  helper.ask_current_file()
+end, {
+  desc = "Ask a required question about the current file",
+})
+
 vim.api.nvim_create_user_command("CRHHistory", function()
   helper.open_history()
 end, {
@@ -57,38 +63,44 @@ end, {
   desc = "Run plugin health checks",
 })
 
-vim.api.nvim_create_user_command("CRHGuide", function()
-  helper.guide()
+vim.api.nvim_create_user_command("CRHReviewCodebase", function()
+  helper.review_codebase()
 end, {
-  desc = "Start a guided repository review session",
+  desc = "Start a Codebase Review",
+})
+
+vim.api.nvim_create_user_command("CRHReviewGitChanges", function()
+  helper.review_git_changes()
+end, {
+  desc = "Start a Git Changes Review",
 })
 
 vim.api.nvim_create_user_command("CRHGuideHistory", function()
   helper.open_guide_history()
 end, {
-  desc = "Open guided review session history",
+  desc = "Open Review Session history",
 })
 
 vim.api.nvim_create_user_command("CRHGuideOpenLast", function()
   helper.open_last_guide()
 end, {
-  desc = "Open the last guided review session",
+  desc = "Open the last Review Session",
 })
 
 vim.api.nvim_create_user_command("CRHGuideHistoryClear", function()
   helper.clear_guide_history()
 end, {
-  desc = "Clear guided review session history for the current workspace",
+  desc = "Clear Review Session history for the current workspace",
 })
 
 vim.api.nvim_create_user_command("CRHGuideClose", function()
   helper.close_guide()
 end, {
-  desc = "Close the current guided review and save the resume position",
+  desc = "Close the current Review Session and save the resume position",
 })
 
 vim.api.nvim_create_user_command("CRHGuidePlan", function()
   helper.open_guide_plan()
 end, {
-  desc = "Open the current guided review plan",
+  desc = "Open the current Review Overview",
 })

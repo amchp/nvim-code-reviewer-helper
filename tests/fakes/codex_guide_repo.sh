@@ -19,8 +19,9 @@ cat >/dev/null
 cat >"$output" <<'EOF'
 ```json
 {
-  "mode": "repo",
+  "mode": "codebase",
   "summary": "Start at the docs, then the command entrypoint, then the main orchestration.",
+  "overview_markdown": "# Review Overview\n\nThis plugin has docs, command registration, and Lua orchestration modules.",
   "items": [
     {
       "path": "README.md",
@@ -43,7 +44,7 @@ cat >"$output" <<'EOF'
   ]
 }
 ```
-# Review Order
+# Review Overview
 
 Start with the docs, then move into the command registration, then the main orchestration.
 

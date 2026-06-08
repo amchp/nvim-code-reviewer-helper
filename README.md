@@ -1,14 +1,14 @@
 # nvim-code-reviewer-helper
 
-Neovim plugin for asking Codex to explain selected code, answer questions about the current file, and generate guided review plans using local repository context.
+Neovim plugin for asking Codex to explain selected code, answer questions about the current file, and run repository review sessions using local context.
 
 ## Features
 
 - Explains a visual selection with surrounding code, diagnostics, symbol context, and nearby docs such as `README.md` or `AGENTS.md`.
 - Supports file-level questions from normal mode when you want repository context for the current buffer.
 - Runs `codex exec --ephemeral` locally and writes the final answer into a reusable markdown split inside Neovim.
-- Saves explain responses and guided review sessions so they can be reopened later.
-- Builds guided review plans with `:CRHGuide` for either current git changes or a first-pass repo walkthrough.
+- Saves explain responses and Review Sessions so they can be reopened later.
+- Starts explicit Codebase Review and Git Changes Review sessions.
 - Integrates BTCA-style dependency repository context through a local sandbox, with optional auto-sync.
 - Uses web search with Codex by default, while still preferring local repository evidence and file citations.
 
@@ -48,8 +48,16 @@ git --version
       desc = "Ask about current file",
     })
 
-    vim.keymap.set("n", "<leader>cg", "<cmd>CRHGuide<cr>", {
-      desc = "Start guided review",
+    vim.keymap.set("n", "<leader>cf", "<cmd>CRHAskFile<cr>", {
+      desc = "Ask about current file",
+    })
+
+    vim.keymap.set("n", "<leader>cr", "<cmd>CRHReviewCodebase<cr>", {
+      desc = "Codebase Review",
+    })
+
+    vim.keymap.set("n", "<leader>cR", "<cmd>CRHReviewGitChanges<cr>", {
+      desc = "Git Changes Review",
     })
   end,
 }
@@ -73,23 +81,27 @@ require("code_reviewer_helper").setup()
 
 - `:CRHExplain`
   In visual mode, prompts for an optional question and explains the selection.
-  In normal mode, asks for a required repo-level question about the current file.
+  In normal mode, remains backward-compatible and asks for a required repo-level question about the current file.
+- `:CRHAskFile`
+  Always asks a required question about the current file and captures the whole file without a visual selection.
 - `:CRHHistory`
   Opens saved explain responses.
 - `:CRHOpenLast`
   Reopens the most recent explain response.
-- `:CRHGuide`
-  Generates a guided review plan for current changes or the whole repo.
+- `:CRHReviewCodebase`
+  Starts a Codebase Review. It always reviews repository structure, regardless of dirty git status.
+- `:CRHReviewGitChanges`
+  Starts a Git Changes Review. It prompts for a positive integer `N`, shows the previous 5 commits, and reviews the aggregate diff from `HEAD~N` to the current working tree.
 - `:CRHGuideHistory`
-  Opens saved guided review sessions.
+  Opens saved Review Sessions.
 - `:CRHGuideOpenLast`
-  Reopens the most recent guided review.
+  Reopens the most recent Review Session.
 - `:CRHGuidePlan`
-  Opens the markdown plan for the active guided review.
+  Opens the markdown Review Overview for the active Review Session.
 - `:CRHGuideClose`
-  Closes the guide and saves the current resume position.
+  Closes the Review Session and saves the current resume position.
 - `:CRHGuideHistoryClear`
-  Clears saved guided review history for the current workspace.
+  Clears saved Review Session history for the current workspace.
 - `:CRHBtcaAddRepo [url]`
   Adds a repository URL to the BTCA context list for the current workspace.
 - `:CRHHealth`
@@ -116,14 +128,25 @@ require("code_reviewer_helper").setup({
 })
 ```
 
-## Guided Review
+The previous CRHGuide command has been removed from the public command surface. Use `:CRHReviewCodebase` or `:CRHReviewGitChanges`.
 
-`:CRHGuide` inspects the current workspace and chooses a mode automatically:
+## Review Sessions
 
-- If the git worktree has tracked or untracked changes, it generates a review plan for those changes.
-- If the worktree is clean, it generates a first-pass walkthrough for the repository.
+A Review Session starts with a virtual `Review Overview` item. This is a scratch buffer, not a real repository file.
 
-Guide sessions are persisted under Neovim state, and the plugin can reopen the last session at the saved file position. In changed-file reviews, the working-tree side stays attached to the real file buffer so you can edit while reviewing. If `diffview.nvim` is installed, changed-file guide sessions use Diffview; otherwise the plugin falls back to its native tab UI.
+Codebase Review builds repository inventory, includes docs such as `README.md` and `AGENTS.md`, and asks Codex for a first-pass file order. The native UI uses exactly two windows: a 30% switcher/list pane and a 70% file viewer. It does not open git changes or diff panes.
+
+Git Changes Review prompts for `N` and reviews one combined diff from `HEAD~N` to the current working tree. The review includes committed changes in `HEAD~N..HEAD`, uncommitted tracked changes, and untracked files when `guide.include_untracked = true`. Overlapping changes are shown once in their final resulting state. The native UI uses a 30% switcher/list pane and splits the remaining 70% into before/after diff panes. If `diffview.nvim` is installed, Git Changes Review can use Diffview; otherwise it uses the native fallback.
+
+Suggested keymaps:
+
+```lua
+vim.keymap.set("v", "<leader>ce", "<cmd>CRHExplain<cr>", { desc = "Explain selection" })
+vim.keymap.set("n", "<leader>cf", "<cmd>CRHAskFile<cr>", { desc = "Ask current file" })
+vim.keymap.set("n", "<leader>cr", "<cmd>CRHReviewCodebase<cr>", { desc = "Codebase Review" })
+vim.keymap.set("n", "<leader>cR", "<cmd>CRHReviewGitChanges<cr>", { desc = "Git Changes Review" })
+vim.keymap.set("n", "<leader>cl", "<cmd>CRHGuideOpenLast<cr>", { desc = "Open last Review Session" })
+```
 
 ## BTCA Repository Context
 

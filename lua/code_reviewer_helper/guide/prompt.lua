@@ -54,25 +54,42 @@ local function render_changes(items)
   return lines
 end
 
+local function render_commits(commits)
+  local lines = {}
+  for _, commit in ipairs(commits or {}) do
+    if type(commit) == "table" then
+      table.insert(lines, string.format("- %s %s", commit.short or "", commit.subject or ""))
+    else
+      table.insert(lines, "- " .. tostring(commit))
+    end
+  end
+  if #lines == 0 then
+    table.insert(lines, "(not available)")
+  end
+  return lines
+end
+
 function M.build(context, config)
+  local title = context.mode == "git_changes" and "Git Changes Review" or "Codebase Review"
   local lines = {
-    "You are planning the fastest way for a Neovim user to understand this codebase.",
+    "You are planning a " .. title .. " for a Neovim user.",
     "Return exactly two sections in this order and nothing else.",
     "First: a fenced json block.",
-    "Second: a markdown document headed '# Review Order'.",
-    "The JSON must be valid and must include mode, summary, and items.",
+    "Second: a markdown document headed '# Review Overview'.",
+    "The JSON must be valid and must include mode, summary, overview_markdown, and items.",
     "Each item must include path, reason, status, and old_path.",
     "Statuses must be one of modified, added, deleted, renamed, untracked, repo.",
+    "Mode must be exactly '" .. context.mode .. "'.",
     "Keep reasons short and concrete.",
     "Every item path must exactly match a path already listed in 'Repository Inventory' or 'Changed File Excerpts'.",
     "Do not invent, infer, or normalize paths. If a path is not listed, do not return it.",
-    string.format("In repo mode, return at most %d items.", config.guide.repo_mode_max_files),
+    string.format("In codebase mode, return at most %d items.", config.guide.repo_mode_max_files),
     "",
   }
 
   add_section(lines, "Expected JSON Shape", {
     "```json",
-    [[{"mode":"changes|repo","summary":"short string","items":[{"path":"relative/path","reason":"short rationale","status":"modified|added|deleted|renamed|untracked|repo","old_path":null}]}]],
+    [[{"mode":"codebase|git_changes","summary":"short string","overview_markdown":"markdown body","items":[{"path":"relative/path","reason":"short rationale","status":"repo|modified|added|deleted|renamed|untracked","old_path":null}]}]],
     "```",
   })
 
@@ -87,17 +104,30 @@ function M.build(context, config)
 
   add_section(lines, "Repository Inventory", render_inventory(context.inventory, 200))
 
-  if context.mode == "changes" and context.changes then
+  if context.mode == "git_changes" and context.changes then
+    add_section(lines, "Git Changes Review Scope", {
+      "- Base: " .. context.changes.base_rev,
+      "- Right side: current working tree",
+      "- Selected commit count: " .. tostring(context.changes.commit_count),
+      "- Uncommitted changes included: " .. tostring(context.changes.uncommitted_included == true),
+      "- Include committed changes, uncommitted tracked changes, and configured untracked files.",
+      "- Treat this as one aggregate GitHub-style review, not separate per-commit sections.",
+    })
+    add_section(lines, "Selected Commits Newest First", render_commits(context.selected_commits))
     add_section(lines, "Git Status", context.changes.status_lines)
     add_section(lines, "Diff Stat", context.changes.diff_stat ~= "" and context.changes.diff_stat or "(empty)")
     add_section(lines, "Changed File Excerpts", render_changes(context.changes.items))
   else
-    add_section(lines, "Task", "Choose the best first-pass order to understand this repository quickly.")
+    add_section(lines, "Task", {
+      "Describe the general codebase structure in overview_markdown.",
+      "Choose the best first-pass order to understand this repository quickly.",
+    })
   end
 
   add_section(lines, "Markdown Requirements", {
-    "- Start with '# Review Order'.",
+    "- Start with '# Review Overview'.",
     "- Include the overall summary.",
+    "- Describe the general structure or aggregate change shape.",
     "- Include the ordered file list with one short reason per file.",
   })
 

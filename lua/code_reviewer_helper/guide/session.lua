@@ -80,6 +80,45 @@ local function commit_info(git_root)
   }
 end
 
+local function previous_commit_objects(git_root, count)
+  if not git_root then
+    return {}
+  end
+  local result = util.system({
+    "git",
+    "-C",
+    git_root,
+    "log",
+    "-" .. tostring(count or 5),
+    "--pretty=format:%H%x09%h%x09%s",
+  })
+  if result.code ~= 0 then
+    return {}
+  end
+  local commits = {}
+  for _, line in ipairs(vim.split(util.trim(result.stdout or ""), "\n", { plain = true })) do
+    local hash, short, subject = line:match("^([^\t]*)\t([^\t]*)\t(.*)$")
+    if short and short ~= "" then
+      table.insert(commits, {
+        hash = hash,
+        short = short,
+        subject = subject or "",
+      })
+    end
+  end
+  return commits
+end
+
+local function overview_item()
+  return {
+    kind = "overview",
+    path = "__overview__",
+    reason = "Review Overview",
+    status = "overview",
+    old_path = nil,
+  }
+end
+
 function M.ensure_history_loaded()
   local seed = resolve_workspace_seed()
   local root = util.git_root(seed) or seed
@@ -90,23 +129,31 @@ function M.ensure_history_loaded()
 end
 
 local function finalize_session(parsed, context)
+  local items = vim.deepcopy(parsed.items)
+  table.insert(items, 1, overview_item())
   local session = {
     id = next_id(),
     mode = parsed.mode,
     workspace_root = context.workspace_root,
     summary = parsed.summary,
+    overview_markdown = parsed.overview_markdown,
     plan_markdown = parsed.plan_markdown,
-    items = parsed.items,
+    items = items,
     commit = commit_info(context.git_root),
+    base_rev = context.changes and context.changes.base_rev or nil,
+    commit_count = context.changes and context.changes.commit_count or nil,
+    selected_commits = context.selected_commits,
+    diff_stat = context.changes and context.changes.diff_stat or nil,
+    uncommitted_included = context.changes and context.changes.uncommitted_included or false,
     resume_index = 1,
-    resume_path = parsed.items[1] and parsed.items[1].path or nil,
+    resume_path = "__overview__",
     created_at = timestamp(),
   }
 
   guide_history.load(context.workspace_root, state.config.guide)
   guide_history.add(session)
   ui.open(session, state.config)
-  util.notify(string.format("Guided review ready: %d files", #session.items))
+  util.notify(string.format("Review Session ready: %d items", #session.items))
   return session
 end
 
@@ -116,8 +163,8 @@ local function handle_completion(request_id, context, attempt, result)
   util.remove_file(result.output_path)
 
   if result.code ~= 0 then
-    ui.show_parse_failure(response ~= "" and response or result.stderr, "codex guide request failed")
-    util.notify("Guided review request failed", vim.log.levels.ERROR)
+    ui.show_parse_failure(response ~= "" and response or result.stderr, "codex Review Session request failed")
+    util.notify("Review Session request failed", vim.log.levels.ERROR)
     return
   end
 
@@ -130,7 +177,7 @@ local function handle_completion(request_id, context, attempt, result)
   if attempt < 2 then
     local repair_id = next_id()
     local repair_prompt = prompt_mod.build_repair(context, state.config, response, err)
-    util.notify("Guided review response invalid, retrying once", vim.log.levels.WARN)
+    util.notify("Review Session response invalid, retrying once", vim.log.levels.WARN)
     state.active_guide_jobs[repair_id] = provider.submit({
       id = repair_id,
       prompt = repair_prompt,
@@ -144,12 +191,17 @@ local function handle_completion(request_id, context, attempt, result)
   end
 
   ui.show_parse_failure(response, err)
-  util.notify("Guided review parse failed: " .. err, vim.log.levels.ERROR)
+  util.notify("Review Session parse failed: " .. err, vim.log.levels.ERROR)
 end
 
-function M.start()
+function M.start(opts)
+  opts = opts or {}
   local seed = resolve_workspace_seed()
-  local context = context_mod.build(seed, state.config)
+  local context = context_mod.build(seed, state.config, opts)
+  if context.error then
+    util.notify(context.error, vim.log.levels.ERROR)
+    return nil
+  end
   local prompt = prompt_mod.build(context, state.config)
   local request_id = next_id()
 
@@ -163,8 +215,74 @@ function M.start()
     end,
   })
 
-  util.notify(string.format("Queued guided review request %s", request_id))
+  util.notify(string.format("Queued Review Session request %s", request_id))
   return request_id
+end
+
+function M.start_codebase()
+  return M.start({ mode = "codebase" })
+end
+
+local function commit_count_prompt(git_root)
+  local commits = previous_commit_objects(git_root, 5)
+  local lines = { "Git Changes Review commit count N (HEAD~N to working tree)." }
+  if #commits > 0 then
+    table.insert(lines, "Previous 5 commits:")
+    for _, commit in ipairs(commits) do
+      table.insert(lines, string.format("%s %s", commit.short, commit.subject))
+    end
+  end
+  table.insert(lines, "N: ")
+  return table.concat(lines, "\n"), commits
+end
+
+local function parse_commit_count(input)
+  local value = util.trim(input or "")
+  if value == "" or not value:match("^%d+$") then
+    return nil
+  end
+  local count = tonumber(value)
+  if not count or count < 1 then
+    return nil
+  end
+  return count
+end
+
+function M.start_git_changes(commit_count)
+  local seed = resolve_workspace_seed()
+  local git_root = util.git_root(seed)
+  if not git_root then
+    util.notify("Git Changes Review requires a git repository", vim.log.levels.ERROR)
+    return nil
+  end
+
+  local prompt, commits = commit_count_prompt(git_root)
+  local function start_with_count(input)
+    local count = parse_commit_count(input)
+    if not count then
+      util.notify("Git Changes Review canceled: enter a positive integer commit count.", vim.log.levels.WARN)
+      return nil
+    end
+    return M.start({
+      mode = "git_changes",
+      commit_count = count,
+      selected_commits = commits,
+    })
+  end
+
+  if commit_count ~= nil then
+    return start_with_count(tostring(commit_count))
+  end
+
+  vim.ui.input({
+    prompt = prompt,
+  }, function(input)
+    if input == nil then
+      return
+    end
+    start_with_count(input)
+  end)
+  return nil
 end
 
 function M.open(session, opts)

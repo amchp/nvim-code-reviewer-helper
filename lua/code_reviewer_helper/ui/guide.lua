@@ -3,7 +3,7 @@ local state = require("code_reviewer_helper.state")
 local util = require("code_reviewer_helper.util")
 
 local M = {}
-local GUIDE_LIST_RATIO = 0.2
+local GUIDE_LIST_RATIO = 0.3
 local GUIDE_MIN_LIST_WIDTH = 18
 local GUIDE_MIN_CONTENT_WIDTH = 30
 
@@ -127,6 +127,14 @@ local function session_item(session, index)
   return session.items[index]
 end
 
+local function is_git_changes(session)
+  return session.mode == "git_changes" or session.mode == "changes"
+end
+
+local function is_overview_item(item)
+  return item and (item.kind == "overview" or item.path == "__overview__")
+end
+
 local function session_resume_index(session)
   if not session or not session.items or #session.items == 0 then
     return 1
@@ -199,7 +207,7 @@ local function ensure_plan_buffer(session)
   end
 
   local buf = named_scratch_buffer(name, "markdown")
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(session.plan_markdown, "\n", { plain = true }))
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(session.plan_markdown or session.overview_markdown or "", "\n", { plain = true }))
   vim.bo[buf].modifiable = false
   set_local_maps(buf)
   state.guide_plan_bufnr = buf
@@ -207,6 +215,9 @@ local function ensure_plan_buffer(session)
 end
 
 local function file_icon(path)
+  if path == "__overview__" then
+    return "[i]"
+  end
   local ok, devicons = pcall(require, "nvim-web-devicons")
   if ok and devicons and type(devicons.get_icon) == "function" then
     local icon = devicons.get_icon(vim.fn.fnamemodify(path, ":t"), vim.fn.fnamemodify(path, ":e"), {
@@ -225,8 +236,9 @@ local function render_list(session)
     return
   end
 
+  local title = is_git_changes(session) and "# Git Changes Review" or "# Codebase Review"
   local lines = {
-    "# Guided Review",
+    title,
     "",
     session.summary,
     "",
@@ -234,8 +246,12 @@ local function render_list(session)
 
   for index, item in ipairs(session.items) do
     local marker = index == state.guide_current_index and ">" or " "
-    table.insert(lines, string.format("%s [%s] %s %s", marker, item.status, file_icon(item.path), item.path))
-    table.insert(lines, "  " .. item.reason)
+    if is_overview_item(item) then
+      table.insert(lines, string.format("%s [%s] %s Review Overview", marker, item.status, file_icon(item.path)))
+    else
+      table.insert(lines, string.format("%s [%s] %s %s", marker, item.status, file_icon(item.path), item.path))
+    end
+    table.insert(lines, "  " .. (item.reason or ""))
     table.insert(lines, "")
   end
 
@@ -280,8 +296,8 @@ local function filetype_for_path(path)
   return vim.filetype.match({ filename = path }) or ""
 end
 
-local function git_show_lines(root, path)
-  local result = util.system({ "git", "-C", root, "show", "HEAD:" .. path })
+local function git_show_lines(root, rev, path)
+  local result = util.system({ "git", "-C", root, "show", (rev or "HEAD") .. ":" .. path })
   if result.code ~= 0 then
     return nil
   end
@@ -298,6 +314,17 @@ local function render_repo_item(session, item)
   end
 
   vim.api.nvim_set_current_win(native.primary_winid)
+  if is_overview_item(item) then
+    local overview = session.overview_markdown or session.plan_markdown or "# Review Overview\n"
+    local buf = new_scratch_buffer(
+      "crh://guide-overview/" .. session.id,
+      "markdown",
+      vim.split(overview, "\n", { plain = true })
+    )
+    vim.api.nvim_win_set_buf(native.primary_winid, buf)
+    return
+  end
+
   local path = session.workspace_root .. "/" .. item.path
   if util.file_exists(path) then
     vim.cmd("edit " .. vim.fn.fnameescape(path))
@@ -317,8 +344,36 @@ local function render_change_item(session, item)
     return
   end
 
+  if is_overview_item(item) then
+    local overview = session.overview_markdown or session.plan_markdown or "# Review Overview\n"
+    local buf = new_scratch_buffer(
+      "crh://guide-overview/" .. session.id,
+      "markdown",
+      vim.split(overview, "\n", { plain = true })
+    )
+    vim.api.nvim_win_set_buf(native.primary_winid, buf)
+    if native.secondary_winid and vim.api.nvim_win_is_valid(native.secondary_winid) then
+      local details = {
+        "# Review Session",
+        "",
+        "- Base: " .. (session.base_rev or "HEAD"),
+        "- Commit count: " .. tostring(session.commit_count or ""),
+        "",
+        "## Diff Stat",
+        "",
+      }
+      vim.list_extend(details, vim.split(session.diff_stat or "", "\n", { plain = true }))
+      vim.api.nvim_win_set_buf(native.secondary_winid, new_scratch_buffer(
+        "crh://guide-overview-details/" .. session.id,
+        "markdown",
+        details
+      ))
+    end
+    return
+  end
+
   local filetype = filetype_for_path(item.path)
-  local left_lines = git_show_lines(session.workspace_root, item.old_path or item.path)
+  local left_lines = git_show_lines(session.workspace_root, session.base_rev or "HEAD", item.old_path or item.path)
   local right_path = session.workspace_root .. "/" .. item.path
   local right_lines = working_lines(session.workspace_root, item.path)
 
@@ -327,7 +382,7 @@ local function render_change_item(session, item)
   elseif item.status == "deleted" then
     right_lines = { "[No file on right side]" }
   elseif not left_lines then
-    left_lines = { "[Unable to load HEAD version]" }
+    left_lines = { "[Unable to load base version]" }
   end
   if not right_lines then
     right_lines = { "[Unable to load working tree version]" }
@@ -382,7 +437,7 @@ local function render_current_native()
   end
 
   render_list(session)
-  if session.mode == "changes" then
+  if is_git_changes(session) then
     render_change_item(session, item)
   else
     render_repo_item(session, item)
@@ -469,13 +524,16 @@ local function open_native_tab(session)
   vim.cmd("botright vsplit")
   native.primary_winid = vim.api.nvim_get_current_win()
 
-  if session.mode == "changes" then
+  if is_git_changes(session) then
     vim.cmd("botright vsplit")
     native.secondary_winid = vim.api.nvim_get_current_win()
     vim.api.nvim_set_current_win(native.list_winid)
   end
 
   apply_native_layout()
+  vim.wo[native.list_winid].wrap = true
+  vim.wo[native.list_winid].linebreak = true
+  vim.wo[native.list_winid].breakindent = true
 
   state.guide_current_index = state.guide_current_index or session_resume_index(session)
   render_current_native()
@@ -496,6 +554,9 @@ local function build_diffview_files(session)
   local working = {}
   local selected_index = session_resume_index(session)
   for index, item in ipairs(session.items) do
+    if is_overview_item(item) then
+      goto continue
+    end
     table.insert(working, {
       path = item.path,
       oldpath = item.old_path,
@@ -504,6 +565,7 @@ local function build_diffview_files(session)
       right_null = item.status == "deleted",
       selected = index == selected_index,
     })
+    ::continue::
   end
   return {
     working = working,
@@ -542,14 +604,14 @@ local function open_with_diffview(session)
       if selected.status == "untracked" or selected.status == "added" then
         return nil
       end
-      return git_show_lines(session.workspace_root, selected.old_path or selected.path)
+      return git_show_lines(session.workspace_root, session.base_rev or "HEAD", selected.old_path or selected.path)
     end
     return nil
   end
 
   local view = CDiffView({
     git_root = session.workspace_root,
-    left = Rev(RevType.COMMIT, "HEAD"),
+    left = Rev(RevType.COMMIT, session.base_rev or "HEAD"),
     right = Rev(RevType.LOCAL),
     files = files,
     update_files = function()
@@ -583,7 +645,7 @@ function M.open(session, config)
   state.guide_current_index = session_resume_index(session)
   ensure_plan_buffer(session)
 
-  if session.mode == "changes" and config.guide.use_diffview_if_available then
+  if is_git_changes(session) and config.guide.use_diffview_if_available then
     local ok = pcall(open_with_diffview, session)
     if ok and state.guide_tabpage then
       return
@@ -643,7 +705,7 @@ function M.show_parse_failure(raw_response, err)
   vim.bo[buf].swapfile = false
   vim.bo[buf].filetype = "markdown"
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    "# Guide Parse Failure",
+    "# Review Session Parse Failure",
     "",
     "- Error: " .. err,
     "",

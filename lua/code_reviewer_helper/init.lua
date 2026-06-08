@@ -306,14 +306,24 @@ end
 
 function M.guide()
   ensure_setup()
-  return guide_session.start()
+  return guide_session.start_codebase()
+end
+
+function M.review_codebase()
+  ensure_setup()
+  return guide_session.start_codebase()
+end
+
+function M.review_git_changes(commit_count)
+  ensure_setup()
+  return guide_session.start_git_changes(commit_count)
 end
 
 function M.open_guide_history()
   ensure_setup()
   local sessions = guide_session.ensure_history_loaded()
   if not sessions or #sessions.entries == 0 then
-    util.notify("No saved guide sessions yet", vim.log.levels.INFO)
+    util.notify("No saved Review Sessions yet", vim.log.levels.INFO)
     return
   end
   guide_history_ui.pick(function(entry)
@@ -327,7 +337,7 @@ function M.open_last_guide()
   ensure_setup()
   local sessions = guide_session.ensure_history_loaded()
   if not sessions or #sessions.entries == 0 then
-    util.notify("No saved guide sessions yet", vim.log.levels.INFO)
+    util.notify("No saved Review Sessions yet", vim.log.levels.INFO)
     return
   end
   guide_session.open(sessions.entries[#sessions.entries], {
@@ -338,10 +348,10 @@ end
 function M.clear_guide_history()
   ensure_setup()
   if not guide_session.clear_history() then
-    util.notify("No saved guide sessions yet", vim.log.levels.INFO)
+    util.notify("No saved Review Sessions yet", vim.log.levels.INFO)
     return false
   end
-  util.notify("Cleared guided review history")
+  util.notify("Cleared Review Session history")
   return true
 end
 
@@ -349,7 +359,7 @@ function M.close_guide()
   ensure_setup()
   local ok, guide_ui = pcall(require, "code_reviewer_helper.ui.guide")
   if not ok then
-    util.notify("Guide UI is not available", vim.log.levels.WARN)
+    util.notify("Review Session UI is not available", vim.log.levels.WARN)
     return false
   end
   guide_ui.close()

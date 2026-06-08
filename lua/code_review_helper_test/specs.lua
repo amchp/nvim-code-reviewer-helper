@@ -90,12 +90,13 @@ local function seed_changes_workspace(root)
   t.write(root .. "/modified.lua", "local value = 1\nreturn value\n")
   t.write(root .. "/deleted.lua", "return 'deleted'\n")
   t.write(root .. "/renamed_old.lua", "return 'old'\n")
-  commit_all(root, "seed")
+  commit_all(root, "base")
 
   t.write(root .. "/modified.lua", "local value = 2\nreturn value\n")
   git(root, { "mv", "renamed_old.lua", "renamed_new.lua" })
-  t.write(root .. "/added.lua", "return 'new'\n")
   vim.uv.fs_unlink(root .. "/deleted.lua")
+  commit_all(root, "selected changes")
+  t.write(root .. "/added.lua", "return 'new'\n")
 end
 
 local function wait_for_guide_session(helper)
@@ -165,9 +166,9 @@ cat >/dev/null
 if [[ "$count" == "1" ]]; then
   cat >"$output" <<'EOF'
 ```json
-{"mode":"repo","summary":"wrong repo","items":[{"path":".github/workflows/test-pr.yml","reason":"hallucinated path","status":"repo","old_path":null}]}
+{"mode":"codebase","summary":"wrong repo","overview_markdown":"# Review Overview\n\nWrong path.","items":[{"path":".github/workflows/test-pr.yml","reason":"hallucinated path","status":"repo","old_path":null}]}
 ```
-# Review Order
+# Review Overview
 
 1. .github/workflows/test-pr.yml
 EOF
@@ -176,9 +177,9 @@ fi
 
 cat >"$output" <<'EOF'
 ```json
-{"mode":"repo","summary":"Review the repo entrypoints first.","items":[{"path":"README.md","reason":"Start with the top-level documentation.","status":"repo","old_path":null},{"path":"plugin/code_reviewer_helper.lua","reason":"Then inspect the Neovim plugin entrypoint.","status":"repo","old_path":null}]}
+{"mode":"codebase","summary":"Review the repo entrypoints first.","overview_markdown":"# Review Overview\n\nReview README.md first, then the plugin entrypoint.","items":[{"path":"README.md","reason":"Start with the top-level documentation.","status":"repo","old_path":null},{"path":"plugin/code_reviewer_helper.lua","reason":"Then inspect the Neovim plugin entrypoint.","status":"repo","old_path":null}]}
 ```
-# Review Order
+# Review Overview
 
 Overall summary: review README.md first, then the plugin entrypoint.
 
@@ -224,9 +225,9 @@ PY
 
 cat >"$output" <<'EOF'
 ```json
-{"mode":"repo","summary":"Start at the docs first.","items":[{"path":"README.md","reason":"Start with the top-level docs.","status":"repo","old_path":null}]}
+{"mode":"codebase","summary":"Start at the docs first.","overview_markdown":"# Review Overview\n\nStart at the docs first.","items":[{"path":"README.md","reason":"Start with the top-level docs.","status":"repo","old_path":null}]}
 ```
-# Review Order
+# Review Overview
 
 Start at the docs first.
 
@@ -1246,11 +1247,11 @@ function M.tests()
       end,
     },
     {
-      name = "guide prompt includes repo inventory and changed file metadata",
+      name = "guide prompt includes repo inventory and aggregate changed file metadata",
       run = function()
         local prompt = require("code_reviewer_helper.guide.prompt").build({
           workspace_root = "/tmp/project",
-          mode = "changes",
+          mode = "git_changes",
           docs = {
             {
               relative_path = "README.md",
@@ -1264,6 +1265,8 @@ function M.tests()
           changes = {
             status_lines = { " M modified.lua" },
             diff_stat = " modified.lua | 2 +-",
+            base_rev = "HEAD~1",
+            commit_count = 1,
             items = {
               {
                 path = "modified.lua",
@@ -1279,6 +1282,7 @@ function M.tests()
         t.match("Return exactly two sections", prompt)
         t.match("Repository Inventory", prompt)
         t.match("Changed File Excerpts", prompt)
+        t.match("HEAD~1", prompt)
         t.match("Every item path must exactly match", prompt)
         t.match("modified.lua", prompt)
       end,
@@ -1289,34 +1293,37 @@ function M.tests()
         local parser = require("code_reviewer_helper.guide.parser")
         local parsed, err = parser.parse([[
 ```json
-{"mode":"repo","summary":"demo","items":[{"path":"README.md","reason":"first","status":"repo","old_path":null}]}
+{"mode":"codebase","summary":"demo","overview_markdown":"# Review Overview\n\nDemo overview.","items":[{"path":"README.md","reason":"first","status":"repo","old_path":null}]}
 ```
-# Review Order
+# Review Overview
 
 1. README
         ]], {
+          mode = "codebase",
           valid_paths = { ["README.md"] = true },
         })
         t.eq(nil, err)
-        t.eq("repo", parsed.mode)
+        t.eq("codebase", parsed.mode)
         t.eq("demo", parsed.summary)
+        t.match("Demo overview", parsed.overview_markdown)
         t.eq(1, #parsed.items)
 
         local recovered
         recovered, err = parser.parse([[
 ```json
-{"mode":"repo","summary":"demo","items":[{"path":"README.md","reason":"first","status":"repo","old_path":null}]}
-# Review Order
+{"mode":"codebase","summary":"demo","overview_markdown":"# Review Overview\n\nDemo overview.","items":[{"path":"README.md","reason":"first","status":"repo","old_path":null}]}
+# Review Overview
 
 1. README
         ]], {
+          mode = "codebase",
           valid_paths = { ["README.md"] = true },
         })
         t.eq(nil, err)
-        t.eq("repo", recovered.mode)
+        t.eq("codebase", recovered.mode)
         t.eq("demo", recovered.summary)
         t.eq(1, #recovered.items)
-        t.match("# Review Order", recovered.plan_markdown)
+        t.match("# Review Overview", recovered.plan_markdown)
 
         local invalid, err = parser.parse("nope", {
           valid_paths = {},
@@ -1326,7 +1333,7 @@ function M.tests()
       end,
     },
     {
-      name = "guide auto-selects repo mode when repo is clean",
+      name = "codebase review uses codebase mode when repo is clean",
       run = function()
         local fake_bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh"
         local helper, root = helper_with_guide_config(fake_bin)
@@ -1335,17 +1342,18 @@ function M.tests()
 
         t.new_buffer({ "# Demo" }, root .. "/README.md")
 
-        helper.guide()
+        helper.review_codebase()
         t.ok(wait_for_guide_session(helper))
 
         local session = helper.__state().guide_session
-        t.eq("repo", session.mode)
-        t.eq(3, #session.items)
+        t.eq("codebase", session.mode)
+        t.eq(4, #session.items)
+        t.eq("__overview__", session.items[1].path)
         t.match("README.md", session.plan_markdown)
       end,
     },
     {
-      name = "guide auto-selects changes mode when git status is non-empty",
+      name = "git changes review uses aggregate mode when commit count is provided",
       run = function()
         local fake_bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_changes.sh"
         local helper, root = helper_with_guide_config(fake_bin, {
@@ -1357,18 +1365,75 @@ function M.tests()
 
         t.new_buffer({ "local value = 2", "return value" }, root .. "/modified.lua")
 
-        helper.guide()
+        helper.review_git_changes(1)
         t.ok(wait_for_guide_session(helper))
 
         local session = helper.__state().guide_session
-        t.eq("changes", session.mode)
-        t.eq(4, #session.items)
-        t.eq("modified.lua", session.items[1].path)
-        t.eq("renamed_old.lua", session.items[4].old_path)
+        t.eq("git_changes", session.mode)
+        t.eq("HEAD~1", session.base_rev)
+        t.eq(5, #session.items)
+        t.eq("__overview__", session.items[1].path)
+        t.eq("modified.lua", session.items[2].path)
+        t.eq("renamed_old.lua", session.items[5].old_path)
       end,
     },
     {
-      name = "guide ignores Finder metadata-only changes and falls back to repo mode",
+      name = "git changes review prompts with previous commits and cancels invalid count",
+      run = function()
+        local fake_bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_changes.sh"
+        local helper, root = helper_with_guide_config(fake_bin, {
+          guide = {
+            use_diffview_if_available = false,
+          },
+        })
+        seed_repo_workspace(root)
+        for index = 1, 6 do
+          t.write(root .. "/README.md", "# Demo " .. index .. "\n")
+          commit_all(root, "commit " .. index)
+        end
+        t.new_buffer({ "# Demo" }, root .. "/README.md")
+
+        local seen_prompt
+        local original_input = vim.ui.input
+        vim.ui.input = function(opts, callback)
+          seen_prompt = opts.prompt
+          callback("not-a-number")
+        end
+
+        local ok, err = pcall(function()
+          helper.review_git_changes()
+        end)
+        vim.ui.input = original_input
+        if not ok then
+          error(err)
+        end
+
+        t.match("Previous 5 commits", seen_prompt)
+        t.match("commit 6", seen_prompt)
+        t.match("commit 2", seen_prompt)
+        t.ok(not seen_prompt:match("commit 1"))
+        t.eq(nil, helper.__state().guide_session)
+      end,
+    },
+    {
+      name = "registered commands expose review commands and remove CRHGuide",
+      run = function()
+        t.load_helper().setup({
+          btca = {
+            sandbox_dir = t.tmp_dir("cmd_btca"),
+            skill_path = t.tmp_dir("cmd_skill") .. "/SKILL.md",
+          },
+        })
+        vim.cmd("runtime plugin/code_reviewer_helper.lua")
+        local commands = vim.api.nvim_get_commands({})
+        t.ok(commands.CRHAskFile ~= nil)
+        t.ok(commands.CRHReviewCodebase ~= nil)
+        t.ok(commands.CRHReviewGitChanges ~= nil)
+        t.eq(nil, commands.CRHGuide)
+      end,
+    },
+    {
+      name = "codebase review ignores dirty git status for mode selection",
       run = function()
         local fake_bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh"
         local helper, root = helper_with_guide_config(fake_bin, {
@@ -1382,16 +1447,16 @@ function M.tests()
 
         t.new_buffer({ "# Demo" }, root .. "/README.md")
 
-        helper.guide()
+        helper.review_codebase()
         t.ok(wait_for_guide_session(helper))
 
         local session = helper.__state().guide_session
-        t.eq("repo", session.mode)
-        t.eq(3, #session.items)
+        t.eq("codebase", session.mode)
+        t.eq(4, #session.items)
       end,
     },
     {
-      name = "guide falls back to repo mode when no git root is available",
+      name = "codebase review works when no git root is available",
       run = function()
         local fake_bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_repo.sh"
         local helper = t.load_helper()
@@ -1418,9 +1483,9 @@ function M.tests()
 
         t.new_buffer({ "# Demo" }, root .. "/README.md")
 
-        helper.guide()
+        helper.review_codebase()
         t.ok(wait_for_guide_session(helper))
-        t.eq("repo", helper.__state().guide_session.mode)
+        t.eq("codebase", helper.__state().guide_session.mode)
         t.eq(root, helper.__state().guide_session.workspace_root)
       end,
     },
@@ -1467,7 +1532,7 @@ function M.tests()
 
         local total_width = vim.api.nvim_win_get_width(list_win) + vim.api.nvim_win_get_width(code_win)
         local ratio = vim.api.nvim_win_get_width(list_win) / total_width
-        t.ok(ratio > 0.18 and ratio < 0.3, string.format("unexpected list ratio: %.3f", ratio))
+        t.ok(ratio > 0.26 and ratio < 0.36, string.format("unexpected list ratio: %.3f", ratio))
 
         vim.api.nvim_set_current_win(vim.fn.bufwinid(helper.__state().guide_list_bufnr))
         local mapping = vim.fn.maparg("<Tab>", "n", false, true)
@@ -1538,7 +1603,7 @@ function M.tests()
 
           local total_width = vim.api.nvim_win_get_width(list_win) + vim.api.nvim_win_get_width(code_win)
           local ratio = vim.api.nvim_win_get_width(list_win) / total_width
-          return ratio > 0.18 and ratio < 0.3
+          return ratio > 0.26 and ratio < 0.36
         end))
 
         local guide_tabpage = helper.__state().guide_tabpage
@@ -1555,7 +1620,7 @@ function M.tests()
         t.ok(code_win ~= nil)
         local total_width = vim.api.nvim_win_get_width(list_win) + vim.api.nvim_win_get_width(code_win)
         local ratio = vim.api.nvim_win_get_width(list_win) / total_width
-        t.ok(ratio > 0.18 and ratio < 0.3, string.format("unexpected list ratio after close: %.3f", ratio))
+        t.ok(ratio > 0.26 and ratio < 0.36, string.format("unexpected list ratio after close: %.3f", ratio))
       end,
     },
     {
@@ -1671,10 +1736,11 @@ function M.tests()
         seed_changes_workspace(root)
         t.new_buffer({ "local value = 2", "return value" }, root .. "/modified.lua")
 
-        helper.guide()
+        helper.review_git_changes(1)
         t.ok(wait_for_guide_session(helper))
 
         local guide_ui = require("code_reviewer_helper.ui.guide")
+        guide_ui.next_item()
         local bufs = current_tab_content_buffers()
         t.eq(3, #bufs)
 
@@ -1754,11 +1820,14 @@ function M.tests()
 
         local session = {
           id = "guide-diffview",
-          mode = "changes",
+          mode = "git_changes",
           workspace_root = t.tmp_dir("diffview_repo"),
           summary = "demo",
-          plan_markdown = "# Review Order\n",
+          overview_markdown = "# Review Overview\n",
+          plan_markdown = "# Review Overview\n",
+          base_rev = "HEAD~1",
           items = {
+            { kind = "overview", path = "__overview__", reason = "Review Overview", status = "overview" },
             { path = "b.lua", reason = "second", status = "modified" },
             { path = "a.lua", reason = "first", status = "untracked" },
           },
@@ -1801,11 +1870,13 @@ function M.tests()
 
         guide_ui.open({
           id = "guide-one",
-          mode = "repo",
+          mode = "codebase",
           workspace_root = root,
           summary = "first summary",
-          plan_markdown = "# Review Order\n\n1. first",
+          overview_markdown = "# Review Overview\n\n1. first",
+          plan_markdown = "# Review Overview\n\n1. first",
           items = {
+            { kind = "overview", path = "__overview__", reason = "Review Overview", status = "overview" },
             { path = "README.md", reason = "first reason", status = "repo" },
           },
         }, config)
@@ -1813,11 +1884,13 @@ function M.tests()
         local ok, err = pcall(function()
           guide_ui.open({
             id = "guide-two",
-            mode = "repo",
+            mode = "codebase",
             workspace_root = root,
             summary = "second summary",
-            plan_markdown = "# Review Order\n\n1. second",
+            overview_markdown = "# Review Overview\n\n1. second",
+            plan_markdown = "# Review Overview\n\n1. second",
             items = {
+              { kind = "overview", path = "__overview__", reason = "Review Overview", status = "overview" },
               { path = "lua/code_reviewer_helper/init.lua", reason = "second reason", status = "repo" },
             },
           }, config)
@@ -1853,7 +1926,7 @@ function M.tests()
         local plan_buf = helper.__state().guide_plan_bufnr
         t.ok(plan_buf ~= nil)
         local text = table.concat(vim.api.nvim_buf_get_lines(plan_buf, 0, -1, false), "\n")
-        t.match("# Review Order", text)
+        t.match("# Review Overview", text)
       end,
     },
     {
@@ -1875,7 +1948,7 @@ function M.tests()
 
         helper.guide()
         t.ok(wait_for_guide_session(helper))
-        t.eq("repo", helper.__state().guide_session.mode)
+        t.eq("codebase", helper.__state().guide_session.mode)
       end,
     },
     {
@@ -1894,7 +1967,7 @@ function M.tests()
 
         helper.guide()
         t.ok(wait_for_guide_session(helper))
-        t.eq("repo", helper.__state().guide_session.mode)
+        t.eq("codebase", helper.__state().guide_session.mode)
       end,
     },
     {
@@ -1974,11 +2047,13 @@ function M.tests()
         local sessions = require("code_reviewer_helper.guide.history").load(root, helper.__state().config.guide)
         table.insert(sessions.entries, {
           id = "saved-guide",
-          mode = "repo",
+          mode = "codebase",
           workspace_root = root,
           summary = "saved summary",
-          plan_markdown = "# Review Order\n\n1. README.md",
+          overview_markdown = "# Review Overview\n\n1. README.md",
+          plan_markdown = "# Review Overview\n\n1. README.md",
           items = {
+            { kind = "overview", path = "__overview__", reason = "Review Overview", status = "overview" },
             { path = "README.md", reason = "start here", status = "repo" },
           },
           created_at = "2026-04-20T00:00:00Z",
@@ -2050,7 +2125,7 @@ function M.tests()
       end,
     },
     {
-      name = "invalid guide response opens a parse failure buffer and does not create a session",
+      name = "invalid review response opens a parse failure buffer and does not create a session",
       run = function()
         local fake_bin = "/home/automac/Documents/Projects/code-reviewer-helper/tests/fakes/codex_guide_invalid.sh"
         local helper, root = helper_with_guide_config(fake_bin, {
@@ -2065,12 +2140,12 @@ function M.tests()
         helper.guide()
         vim.wait(2000, function()
           local lines = vim.api.nvim_buf_get_lines(0, 0, 1, false)
-          return lines[1] == "# Guide Parse Failure"
+          return lines[1] == "# Review Session Parse Failure"
         end)
 
         t.eq(nil, helper.__state().guide_session)
         local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
-        t.match("Guide Parse Failure", text)
+        t.match("Review Session Parse Failure", text)
       end,
     },
     {
@@ -2090,9 +2165,10 @@ function M.tests()
         t.ok(wait_for_guide_session(helper))
 
         local session = helper.__state().guide_session
-        t.eq("repo", session.mode)
-        t.eq(2, #session.items)
-        t.eq("README.md", session.items[1].path)
+        t.eq("codebase", session.mode)
+        t.eq(3, #session.items)
+        t.eq("__overview__", session.items[1].path)
+        t.eq("README.md", session.items[2].path)
         t.eq("2", t.read(counter))
       end,
     },
